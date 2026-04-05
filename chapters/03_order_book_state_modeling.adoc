@@ -1,3 +1,4 @@
+[#ch03-order-book]
 == Chapter 3: Build an Order Book That Cannot Hold a Contradictory State
 
 Your chapter 2 parser can walk a market feed without allocating. It extracts individual messages from the stream with surgical precision. Useful, but incomplete: a parser that cannot maintain live state is just a well-behaved spectator.
@@ -112,6 +113,18 @@ Run the chapter 3 tests to verify the full path works.
 cargo test --test integration_ch03
 ----
 
+.Representative test output: valid replay and guarded rejection
+[source,text]
+----
+running 2 tests
+test order_book_smoke::replay_stream_happy_path ... ok <1>
+test order_book_smoke::rejects_over_execute ... ok <2>
+
+test result: ok. 2 passed; 0 failed
+----
+<1> The happy-path replay confirms state transitions reach a stable terminal state.
+<2> The rejection path proves illegal transitions fail at the boundary rather than mutating state.
+
 The happy-path test replays a deterministic stream with add, execute, and cancel messages. At the end there are zero open orders and two closed ones with explicit reasons. The failure test tries to execute more shares than remain and checks that the book rejects the transition instead of drifting into nonsense. Another test tries to cancel an order that doesn't exist and verifies the named rejection surfaces at the boundary.
 
 That is the real win in this chapter. Not that the code compiles without errors. That the bad state has a name and gets stopped at the boundary. You can write a test that says "if this invalid transition reaches the order book, the book will reject it" and the type system guarantees you're not missing any cases.
@@ -123,3 +136,4 @@ The dry observation for this chapter: good state design lets the compiler ask "w
 Replay the chapter 3 order-flow fixture through the order book, process every Add, Execute, Cancel, and Replace message in sequence, and confirm that every order ends either open with the correct remaining shares or closed for an explicit reason—with zero panics and zero invalid state combinations.
 
 Now the parser works, the feed handler streams without allocating, and the order book captures state in types that make nonsense impossible. But you have been working with comfortable fixture sizes. Chapter 4 asks a harder question: what happens when input size stops being friendly and you have a full day of real market data?
+Continue to <<ch04-streaming,Chapter 4>>.

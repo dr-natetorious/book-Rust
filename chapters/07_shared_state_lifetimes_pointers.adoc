@@ -1,4 +1,4 @@
-== Chapter 7: Share live risk state across the platform without copying it
+== Share live risk state across the platform without copying it
 
 Your chapter 6 exercise gave you risk checks architected with traits and generics. Each check evaluates against current positions. But where do those positions live? Your code so far has assumed a single owner of state. Feed processing owns the feed, order book owns the book, risk engine owns positions.
 

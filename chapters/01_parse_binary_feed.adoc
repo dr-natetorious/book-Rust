@@ -1,4 +1,4 @@
-== Chapter 1: Parse a Binary Market Feed from Raw Bytes
+== Parse a Binary Market Feed from Raw Bytes
 
 Your task in this chapter is concrete: read a binary stream of market data messages, parse them correctly, and hand the parsed records to the caller. That sounds routine. The Rust constraint—that you must be explicit about which code owns each value—will transform it into a lesson about memory and responsibility that no amount of documentation would have made stick.
 

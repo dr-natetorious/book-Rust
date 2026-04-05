@@ -1,3 +1,4 @@
+[#ch04-streaming]
 == Chapter 4: Stream a full trading day without running out of memory
 
 Your chapter 3 order book captures state transitions as types that make bad states impossible to express. It works perfectly on your fixture. That same code breaks silently when input stops being friendly.
@@ -101,6 +102,18 @@ Run both the happy path and the failure tests:
 cargo test --test integration_ch04
 ----
 
+.Representative test output: flat pipeline and truncation guard
+[source,text]
+----
+running 2 tests
+test iterator_smoke::file_frame_iter_replays_fixture ... ok <1>
+test iterator_smoke::file_frame_iter_reports_truncated_header ... ok <2>
+
+test result: ok. 2 passed; 0 failed
+----
+<1> The replay test confirms frame-by-frame traversal without staging the full day in memory.
+<2> The truncation test confirms malformed boundaries fail fast with a named error.
+
 The truncation test verifies that a malformed header returns an error instead of panicking and continuing with garbage. The file iterator test confirms that you can iterate across all frames without holding them in memory simultaneously. The performance test verifies that memory stays flat across thousands of frames.
 
 === Exercise
@@ -108,3 +121,4 @@ The truncation test verifies that a malformed header returns an error instead of
 Run the parser against your fixture stream through `FileFrameIter`, confirm that processing stays frame-by-frame with flat memory use across thousands of records, then check the test output for confirmed frame boundary tracking and zero unintended allocations.
 
 You now process gigabytes of data while holding only one frame at a time. The iterator chain is clean, the allocation profile is flat, and the order book can ingest the full feed. But the code still assumes every record is well-formed. Chapter 5 asks: what happens when a record is corrupted?
+Continue to <<ch05-errors,Chapter 5>>.

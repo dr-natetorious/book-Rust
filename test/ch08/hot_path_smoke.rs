@@ -20,6 +20,12 @@ fn sample_stream() -> Vec<u8> {
     stream.push(add_payload.len() as u8);
     stream.extend_from_slice(&add_payload);
 
+    // Include a second add record so baseline performs per-message allocations
+    // while optimized path reuses its scratch buffer after initial growth.
+    stream.push(b'A');
+    stream.push(add_payload.len() as u8);
+    stream.extend_from_slice(&add_payload);
+
     stream
 }
 

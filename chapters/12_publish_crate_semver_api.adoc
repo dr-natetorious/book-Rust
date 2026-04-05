@@ -1,4 +1,4 @@
-== Chapter 12: Package the platform so another team can depend on it
+== Package the platform so another team can depend on it
 
 Your chapter 11 exercise moved decompression into your codebase with a tested safety contract. Everything you built—parsing, state, error handling, risk checks, concurrency, async fan-out, FFI wrapping—now works as a single system.
 

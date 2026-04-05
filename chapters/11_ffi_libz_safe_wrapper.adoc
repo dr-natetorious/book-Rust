@@ -1,4 +1,4 @@
-== Chapter 11: Decompress the sample data without leaving Rust
+== Decompress the sample data without leaving Rust
 
 Your chapter 10 exercise gave you async fan-out with measured backpressure, but your entire pipeline still assumes someone manually decompressed the sample file before the program started. That manual step breaks automation, introduces drift, and makes testing harder.
 
@@ -31,9 +31,9 @@ Try to compile this deliberately broken wrapper. Read the Miri report before pro
 include::../src/ch11/unsafe_bounds_broken.rs[tag=unsafe_bounds_broken]
 ----
 
-[listing]
+[source,text]
 ----
-== Miri report (trimmed)
+Miri report (trimmed)
 error: Undefined Behavior: out-of-bounds pointer arithmetic
 	--> src/ch11/unsafe_bounds_broken.rs:6:5
 ----
