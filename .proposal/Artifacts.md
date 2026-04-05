@@ -50,14 +50,13 @@ Only when topology or flow is genuinely hard to hold in working memory. The test
 A box labeled "Order Book" with arrows. The reader knows what a box is.
 
 **Format rule:**
-Diagrams must be written as `[ditaa]` blocks, not `[literal]` or ASCII art in code blocks. `asciidoctor-diagram` is installed in the container toolchain. A `[literal]` block renders as monospace text in all output formats. A `[ditaa]` block renders as a clean graphic in HTML, PDF, and EPUB. Use `[ditaa]`.
+Diagrams must be written as `[mermaid]` blocks, not `[literal]` or ASCII art in code blocks. `asciidoctor-diagram` is installed in the container toolchain, and the image build provides `mmdc` plus the browser runtime Mermaid needs. A `[literal]` block renders as monospace text in all output formats. A `[mermaid]` block renders as a clean graphic in HTML, PDF, and EPUB. Use `[mermaid]`.
 
 ```asciidoc
-[ditaa]
+[mermaid]
 ....
-+----------+     +----------+
-| Source   |---->| Result   |
-+----------+     +----------+
+flowchart LR
+   Source[Source] --> Result[Result]
 ....
 ```
 

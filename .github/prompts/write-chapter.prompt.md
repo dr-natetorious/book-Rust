@@ -20,6 +20,7 @@ Read all of these before producing any output:
 7. `.proposal/Artifacts.md` — rules for code snippets, callouts, and when to use them.
 8. `.proposal/SectionDensity.md` — per-chapter pacing guidance where available.
 9. The previous chapter's `.adoc` file — read its closing exercise so you can write the callback opening.
+10. While reading, extract the chapter's reader journey in one line: `task -> failure/friction -> discovery -> working result`.
 
 ---
 
@@ -38,6 +39,7 @@ Rules:
 3. Code must compile. If it is intentionally broken for the reader to try, put it in a separate file suffixed `_broken.rs` and mark it prominently with a comment.
 4. Use explicit, named error types. No `unwrap()` in library code.
 5. Keep examples deterministic: no `rand`, no system time, no network calls.
+6. Prefer source layouts that let the reader run something early and then extend it, rather than dumping the final design all at once.
 
 ---
 
@@ -74,6 +76,9 @@ Write `chapters/NN_title.adoc`. The file must already exist as a stub — update
 
 4. **Chapter body** — sections follow the structure in `.proposal/Overview.md` for this chapter.
    - Problem first. Friction second. Concept third. Never concept first.
+   - The prose answers "how do I do this?" and "why did that fail?" more often than "what is X?"
+   - Each major section needs a visible reader action: run code, inspect output, read an error, compare two implementations, or make a design choice.
+   - When a Rust-specific idea appears for the first time, add a concise bridge from concepts the reader likely knows already: pointers, slices, tagged unions, interfaces, ownership of heap data, or thread-safety rules.
    - Code included via tag references only:
      ```asciidoc
      [source,rust]
@@ -91,6 +96,7 @@ Write `chapters/NN_title.adoc`. The file must already exist as a stub — update
 5. **Exercise** — one concrete task, runs against fixture or real Nasdaq data.
    - Stated as an imperative: "Run the parser against the fixture and print every Add Order record."
    - No debrief after the exercise. The next chapter's callback is the debrief.
+   - The exercise must feel like the natural next move after the chapter body, not a detached homework problem.
 
 6. **One dry observation** — placed at the exhale after the hardest section.
    - Technically accurate, slightly sinister, one or two sentences.
@@ -121,6 +127,8 @@ In `.proposal/manifest.yaml`, find the entry for chapter `${input:chapter_id}` a
 2. Confirm every `include::` in the chapter resolves to an existing file and tag.
 3. Confirm the chapter has exactly one domain-context paragraph.
 4. Confirm the chapter opens with a callback and ends with an exercise — no debrief.
+5. Confirm the reader journey is visible on the page: task, friction, discovery, working result.
+6. Confirm the longest section is one of the chapter's hardest or most valuable ideas.
 
 ## Step 7 — Voice self-check (read the prose back against this list)
 
@@ -133,5 +141,10 @@ This step is not optional. Read the chapter you just wrote and confirm each item
 - [ ] The dry observation has an unexpected implication — it does not give advice or tell the reader to appreciate something.
 - [ ] The chapter never tells the reader how to feel about the book or the material.
 - [ ] Voice is "you" throughout. No "we".
-- [ ] All diagrams are `[ditaa]` blocks, not `[literal]` or ASCII art in source blocks.
+- [ ] All diagrams are `[mermaid]` blocks, not `[literal]` or ASCII art in source blocks.
 - [ ] Any tool or command mentioned in prose is shown with a runnable invocation or explicitly noted that one is not available.
+- [ ] The chapter teaches the reader how to do the work, not merely what the topic means.
+- [ ] Every major section contains a concrete action, artifact, error, output, or decision before extended explanation.
+- [ ] Rust-specific ideas get a short first-contact refresher instead of assuming prior Rust reading.
+- [ ] Sentence and paragraph rhythm vary across adjacent sections; the prose does not read templated.
+- [ ] Important or difficult ideas are given more real estate than straightforward setup.

@@ -1,22 +1,95 @@
 == Chapter 1: Parse a Binary Market Feed from Raw Bytes
 
-Chapter 0 ended with a compiled project and a runnable test command. Here we use that baseline to parse binary messages with ownership-safe code.
+`cargo test` already runs. The fixture is already in the repository. The next step is less glamorous: stop treating the feed as a blob and start reading bytes with intent.
 
-Market feeds are compact binary streams where every byte has a purpose. We will parse one message type first and make the data model explicit.
+You need one working parser before you need a reusable parser. That distinction matters. The first pass is allowed to be narrow as long as it is correct.
+
+=== Reading binary without ceremony
+
+An ITCH feed is not self-describing. A message arrives as bytes, the first byte tells you the record type, the second tells you the payload length, and the rest only make sense if you already know the layout. That is enough domain context for now. The useful part is that every field has a fixed width, which means you can stop guessing and start slicing.
+
+Start with the one message type you can test end to end: Add Order.
 
 [source,rust]
 ----
 include::../src/ch01/parser.rs[tag=add_order_message]
 ----
 
+This struct is deliberately owned. The stock symbol is an `[u8; 8]`, not a `String`, because the feed already decided the width. The parser's first job is to respect the wire format instead of improving it.
+
+Now turn the payload bytes into that struct.
+
 [source,rust]
 ----
 include::../src/ch01/parser.rs[tag=parse_add_order]
 ----
+
+The work is blunt on purpose: take the known offsets, read them big-endian, copy the fixed-width symbol into an array, return a typed value. No framework. No parser combinators. At this stage those would mostly hide the interesting part, which is that Rust makes you state exactly who owns the parsed data.
+
+If you come from C, this may look like ordinary buffer decoding with nicer error handling. If you come from Python or Java, it helps to name what the slices are doing. `&payload[0..2]` is not a copy of those bytes. It is a borrowed view into the original buffer. A pointer, in the broadest sense, points at an address where data lives. A Rust reference is a constrained pointer: it points at data, but it also carries rules about aliasing and validity that the compiler checks. That extra structure is the whole game.
+
+=== The first time ownership becomes concrete
+
+Try to compile this. Read the error before you read the next paragraph.
+
+[source,rust]
+----
+include::../src/ch01/move_semantics_broken.rs[tag=move_after_process]
+----
+
+The compiler error looks like this:
+
+[source,text]
+----
+error[E0382]: borrow of moved value: `msg`
+  --> src/ch01/move_semantics_broken.rs:8:22
+	|
+6  |     let msg = parse_add_order(bytes)?;
+	|         --- move occurs because `msg` has type `AddOrderMessage`, which does not implement the `Copy` trait
+7  |     process(msg);
+	|             --- value moved here
+8  |     println!("{:?}", msg);
+	|                      ^^^ value borrowed here after move
+----
+
+This is the chapter's real subject. Not endianness. Not byte offsets. Ownership. `process` took the message by value, so the parser result changed hands. The compiler is refusing to let you use the old binding because there is no old binding anymore. The move model sounds abstract until a parser value disappears in front of you. Then it stops being abstract.
+
+This is a useful contrast with other languages. In Python, `msg` would usually be another reference to a heap object and the question would be who mutates it later. In Java, object references behave similarly. In C++, the code might copy, move, or bind a reference depending on signatures and value categories that are easy to gloss over in a quick read. Rust forces the transfer to be explicit enough that you can see it in the function call. One owner in, zero owners left behind.
+
+The fix is not mystical. Pass a reference if the callee only needs to observe the message, or return the message if the callee is supposed to own it next. Rust is forcing that decision early, while the data model is still small enough to reason about.
+
+That is why ownership matters beyond syntax. It answers a plain engineering question: when this function returns, who is responsible for the bytes represented by this value? Rust makes you answer that in the type system instead of in team folklore.
+
+The parser is simple enough that the error message feels almost overqualified for the job. That won't last.
+
+=== Parsing a stream instead of one record
+
+One Add Order payload is enough to learn the layout. It is not enough to process a feed. You still need the outer loop: read the type byte, read the payload length, slice the payload, dispatch on the record type, repeat.
 
 [source,rust]
 ----
 include::../src/ch01/parser.rs[tag=parse_records]
 ----
 
-Exercise: run the parser against the fixture stream and print every Add Order record.
+This function does two jobs. First, it proves that the stream framing logic is correct: every record starts with the same two-byte header, every payload length is checked before slicing, and truncated input becomes a named error instead of a panic. Second, it shows where ownership goes. Each parsed message is pushed into a `Vec<AddOrderMessage>`, which means the stream buffer can go away and the parsed records remain valid.
+
+That last point is the important bridge to later chapters. The `Vec` lives on the heap, but the variable that owns it lives in the current stack frame. The parsed `AddOrderMessage` values are owned values inside that vector, not references back into the input stream. When `parse_records` returns, the caller gets a self-contained result. That is easy to reason about, which is exactly why chapter 1 starts here.
+
+That owned `Vec` is not the final architecture. It is the right architecture for chapter 1 because you need a concrete success case before you optimize anything. If you skip that step and reach for borrowing immediately, you will have two moving parts instead of one.
+
+=== Running the parser against a real fixture
+
+The repository already has a deterministic hex fixture and a smoke test around it. Run the test first.
+
+[source,shell]
+----
+cargo test --test integration_ch01
+----
+
+Then add a tiny binary or temporary `println!` in your local branch and print the parsed Add Order records from that same fixture. The important thing is not the display format. The important thing is that the bytes become fields you can name without losing track of ownership.
+
+When the test passes you know three things: the framing is correct, the field extraction is correct, and truncation fails where you expect it to fail. That is enough ground to stand on before the next chapter takes the copies away.
+
+=== Exercise
+
+Run the parser against the chapter 1 fixture and print every Add Order record with its order reference, side, shares, stock symbol, and price.

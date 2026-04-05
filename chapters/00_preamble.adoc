@@ -2,53 +2,45 @@
 
 === The problem Rust was built to solve
 
-You've shipped concurrent systems in C++. You've debugged race conditions in Go at 2am. You've watched a Python service fall over under load and spent two days proving it was a GIL contention issue, not a business logic bug. You already know what the hard problems are. They're the same hard problems they've always been: shared mutable state, ownership of heap-allocated memory, undefined behavior at the boundary between your code and someone else's.
+The hard problems in software don't change. Shared mutable state. Ownership of heap-allocated memory. Undefined behavior at the boundary between your code and someone else's. Whatever language you've been working in, you've met at least one of these in production — and it was expensive.
 
-Rust doesn't fix those problems by introducing a runtime. It doesn't fix them by adding a garbage collector. It fixes them by making the common unsafe patterns unrepresentable at compile time. The borrow checker is not a restriction — it's a proof. When the program compiles, certain categories of bugs provably cannot exist. Not "unlikely." Not "caught by the test suite." Cannot exist.
+Rust doesn't fix those problems by introducing a runtime. It doesn't fix them by adding a garbage collector. It fixes them by making the common unsafe patterns unrepresentable at compile time. The borrow checker is Rust's static analysis pass for ownership and references: it tracks who owns a value, who is allowed to read it, and when mutation is legal. It is not a restriction — it's a proof. When the program compiles, certain categories of bugs provably cannot exist. Not "unlikely." Not "caught by the test suite." Cannot exist.
 
-That's the thing the language was built to solve. Every concept in this book is downstream of that.
+If you're coming from C or C++, think of this as taking the aliasing and lifetime rules you normally carry around in your head and asking the compiler to enforce them mechanically. If you're coming from Go, Java, or Python, the mental shift is different: values are not all implicitly shareable references managed by a runtime. Rust makes ownership part of the type story, and that is why the language can remove entire bug classes without a garbage collector.
+
+That's the thing the language was built to solve.
 
 === Who this book is for
 
-This book is for engineers who already know how to program — and need to learn Rust's particular model rather than a new way to think about computing.
+This book is for engineers who already know how to program and want Rust taught in the context of real work rather than isolated language drills.
 
-It assumes you understand what a heap allocation costs. It assumes you've debugged a data race in production or, if you've been lucky enough not to, you understand in your bones why they're catastrophic. It assumes familiarity with basic Rust syntax at the level of the first four chapters of _The Rust Programming Language_ — if you haven't read those, do that first. This book won't re-explain what a closure is.
+It assumes you understand what a heap allocation costs. It assumes you know why data races are catastrophic — either because you've debugged one in production, or because you've thought carefully enough about shared mutable state to know you'd rather not. It does not assume you've already read a Rust book. When the prose uses a Rust-specific idea such as ownership, borrowing, or traits, it needs to earn that idea on the page.
 
-What it will do is put you in situations where Rust's ownership model is the only clean solution. You'll feel the friction of the wrong approach before you understand the right one. That ordering is intentional. The compiler errors you'll hit in chapter 1 are the syllabus.
+What it will do is put you in situations where Rust's ownership model is the only clean solution. You'll meet unfamiliar syntax early, but always in the middle of a concrete task. You'll feel the friction of the wrong approach before you understand the right one. That ordering is intentional. The compiler errors you'll hit in chapter 1 are the syllabus.
 
-If you're a beginner looking for a gentle introduction: this isn't the book. If you're a senior engineer who already knows C++, Go, or Python at production depth and wants to add Rust to that toolkit in a context that respects your experience: this is the book.
+If you're brand new to programming, this is the wrong first book. If you're a senior engineer coming from C++, Go, Python, Java, or a similar language and you want to become fluent in Rust by building something that matters, this is the book.
 
 === The platform you're going to build
 
-Twelve chapters. One project. Every line of code you write in chapter 2 is still running in chapter 12.
+The project runs for twelve chapters. Every line of code you write in chapter 2 is still running in chapter 12.
 
 The project is a market data platform: a system that reads a binary feed of financial messages, maintains a live order book, applies pre-trade risk checks, and publishes snapshots to downstream consumers. By the end, it's concurrent, async, tested, and packaged as a crate.
 
-[literal]
+If you have not worked on trading systems before, the only thing that matters here is pressure. A feed handler ingests structured bytes at high volume. The order book turns those bytes into live state. Downstream consumers need snapshots that are fast and correct. That combination is useful because it creates immediate reasons to care about ownership, layout, allocation, and concurrency.
+
+[mermaid]
 ....
- Raw ITCH feed
-      │
-      ▼
- ┌────────────┐        ┌────────────┐
- │ Feed       │──msg──▶│ Order Book │──snapshot──▶ consumers
- │ Handler    │        │ (ch 3–4)   │
- │ (ch 1–2)   │        └────────────┘
- └────────────┘               │
-      │                  risk check
-      │                  (ch 5–7)
-      │
- ┌────────────┐
- │ Concurrent │  ch 8–10: threads, async, backpressure
- │ Pipeline   │
- └────────────┘
-      │
- ┌────────────────────────┐
- │ Published Crate        │  ch 11–12: FFI, semver, API design
- │ + PyO3 bridge          │
- └────────────────────────┘
+flowchart LR
+   Feed[Raw ITCH feed] --> Handler[Feed Handler<br/>chs 1-2]
+   Handler -->|msg| OrderBook[Order Book<br/>chs 3-4]
+   OrderBook -->|snapshots| Consumers[Consumers]
+   OrderBook --> Risk[Risk Check<br/>chs 5-7]
+   OrderBook --> Pipeline[Concurrent Pipeline<br/>chs 8-10]
+   Handler --> Crate[Published Crate<br/>chs 11-12]
+   Pipeline --> Crate
 ....
 
-The finance domain is deliberately shallow. You don't need to know what a dark pool is. You need to know that this system processes a lot of data very fast, cannot produce incorrect state, and cannot afford regressions. That's enough for every concept in the book to feel necessary rather than academic.
+The finance domain is deliberately shallow. You don't need to know what a dark pool is. You need to know that this system processes a lot of data very fast, cannot produce incorrect state, and cannot afford regressions.
 
 The data is real. Nasdaq publishes free ITCH 5.0 binary sample files at `emi.nasdaq.com/ITCH/Nasdaq%20ITCH/`. No account required. You'll download one before this preamble is finished.
 
@@ -86,9 +78,18 @@ cargo clippy
 cargo fmt
 ----
 
-For editor support, install `rust-analyzer`. It's available as a VS Code extension, a Neovim plugin, and a standalone LSP server for any editor that speaks LSP. It provides real-time type information, inline error display, and the single most useful thing: showing you the inferred type of any expression you hover over. When you're learning, that feedback loop is faster than the compiler.
+For editor support, install `rust-analyzer`. The language server is available as a Cargo-managed component:
 
-You don't need to configure any of these. The defaults work. Move on.
+[source,shell]
+----
+rustup component add rust-analyzer
+----
+
+Point your editor at the binary (`~/.rustup/toolchains/stable-*/bin/rust-analyzer`) or install the VS Code extension directly — it manages the binary automatically. The single most useful feature: inferred type display on hover. When you're learning what the compiler sees, that feedback loop is faster than running `cargo check` manually.
+
+That type display matters more in Rust than it does in most languages. A variable is not just "some string" or "some collection." The type often tells you whether the value is owned, borrowed, mutable, shared, fallible, or pinned to a lifetime relationship the compiler is tracking. Hover text is not a convenience feature here. It is part of how you learn to read the program the way Rust reads it.
+
+You don't need to configure any of these. The defaults work.
 
 === How to read a compiler error
 
@@ -122,9 +123,11 @@ Read it in this order:
 
 The span annotations are where the information is. The message at the top is a summary. Read the annotations first.
 
+This is worth slowing down for because Rust errors often explain a rule you have been applying informally for years. In Python you might see a runtime failure after the fact. In Java you may get a type mismatch and move on. In C++ you may get no warning at all and then spend an afternoon with a debugger. Rust tends to stop earlier and tell you which ownership or borrowing rule you crossed while the code is still small enough to fix in one pass.
+
 You'll spend real time on compiler errors in the first three chapters. That time is the investment. By chapter 5 the errors read as fast as print statements — they're telling you something precise that you've already internalized. The chapter still takes the same clock time to resolve. It just stops feeling like a fight.
 
-The compiler's error messages are good enough that some engineers read them before looking at their own code. It's an unusual amount of information to get from a failing build. Try not to take it for granted.
+Most build systems tell you something broke. The Rust compiler tells you what you were thinking when you broke it.
 
 === Your first Cargo project
 
@@ -151,9 +154,9 @@ test parser_smoke::parses_single_add_order_from_fixture ... ok
 test result: ok. 3 passed; 0 failed
 ----
 
-Three parser tests passing against a deterministic hex fixture. You didn't write the parser yet — chapter 1 will walk through it line by line. But you've confirmed the toolchain works, the crate compiles, and the test harness runs. That's the baseline. Everything from here builds on it.
+Three parser tests passing against a deterministic hex fixture. You didn't write the parser yet — chapter 1 will walk through it line by line. The toolchain works, the crate compiles, the test harness runs.
 
-If `cargo test` fails: check that you're on Rust stable 1.75 or later (`rustc --version`), and that you have no local uncommitted changes.
+If `cargo test` fails: check that you're on Rust stable 1.94.1 (`rustc --version`), and that you have no local uncommitted changes.
 
 === Downloading the sample data
 
@@ -164,7 +167,7 @@ Every exercise in this book runs against real Nasdaq ITCH 5.0 binary data. Nasda
 emi.nasdaq.com/ITCH/Nasdaq%20ITCH/
 ----
 
-Download the January 30, 2020 file. That's the day the WHO declared COVID-19 a Public Health Emergency of International Concern. The feed was under elevated volatility, high message volume, and unusual cancel-to-execute ratios. It's the most interesting data in the archive for our purposes. The file is approximately 5.2 GB compressed.
+Download the January 30, 2020 file. That's the day the WHO declared COVID-19 a Public Health Emergency of International Concern. The feed was under elevated volatility, high message volume, and unusual cancel-to-execute ratios. It's the most interesting sample in the archive. The file is approximately 5.2 GB compressed.
 
 If you're on a slower connection, the December 30, 2019 file is 3.3 GB and works for every exercise.
 
@@ -190,7 +193,7 @@ The `data/` directory is listed in `.gitignore`. The binary file does not belong
 Before moving to chapter 1, confirm three things:
 
 . `cargo test` passes with no failures.
-. `rustc --version` reports 1.75 or later.
+. `rustc --version` reports 1.94.1.
 . The sample data file is present at `data/01302020.NASDAQ_ITCH50.gz` (or your chosen alternative).
 
 That's the baseline. Chapter 1 starts from exactly this state.

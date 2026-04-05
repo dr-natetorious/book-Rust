@@ -1,5 +1,98 @@
 == Chapter 3: Build an Order Book That Cannot Hold a Contradictory State
 
-Callback: chapter 2 established zero-copy parsing for inbound records.
+The feed handler from chapter 2 can walk the stream without allocating. Useful, but incomplete. A fast parser that cannot maintain state is just a well-behaved spectator.
 
-This chapter models order-book state transitions with enums and exhaustive matching.
+Now the messages need somewhere to land. The order book is where Rust stops being a parser language and starts acting like a design language.
+
+=== The model fails before the code does
+
+An order book is only a map from order reference to current state, but the state transitions are where things go wrong. Add creates a live order. Execute reduces shares. Cancel reduces shares for a different reason. Once an order is closed, further mutations are nonsense. That is the domain context you need.
+
+The easiest bad model is a struct full of booleans.
+
+[source,rust]
+----
+include::../src/ch03/order_book.rs[tag=naive_order_state]
+----
+
+This compiles. It is also wrong. `live = true` and `canceled = true` can coexist. So can `executed = true` and `canceled = true`. The type lets you represent states the business logic should never permit, which means every consumer now has to remember which boolean combinations are impossible. They won't.
+
+This is a familiar problem even if the Rust syntax is new. In Java or Python, a cluster of booleans often starts as "simple state" and then grows contradictions. In C or C++, a struct with flags does the same thing. The weakness is not the language. The weakness is the model. If the type can express nonsense, the rest of the codebase eventually will.
+
+Use an enum instead.
+
+[source,rust]
+----
+include::../src/ch03/order_book.rs[tag=order_state]
+----
+
+Now there is only one state at a time. The impossible combinations are gone because there is nowhere to store them. That is the first Rust design principle in this book that matters beyond syntax: make illegal state unrepresentable.
+
+If you know tagged unions from C, algebraic data types from functional languages, or sealed hierarchies from modern Java, Rust enums belong to that family. They are not glorified constants. They are a way to say "this value is one of these shapes, and each shape carries different data." That is why they are so good at modeling protocol messages and state transitions.
+
+=== Let the event type do the dispatch
+
+The feed handler already classified the wire records. The order book needs a similar classification for state transitions.
+
+[source,rust]
+----
+include::../src/ch03/order_book.rs[tag=book_event]
+----
+
+This is more than neatness. `BookEvent` forces every caller to say which transition is happening. Add, Cancel, and Execute are not one function with three optional parameters. They are different operations with different consequences.
+
+That difference is easy to underestimate if you have spent years around APIs that accept one broad request object and validate combinations at runtime. Rust nudges the design earlier. Separate variants mean the type checker sees the operation boundary too, not just the business logic inside the method body.
+
+The book itself is just a map keyed by `order_ref`.
+
+[source,rust]
+----
+include::../src/ch03/order_book.rs[tag=order_book]
+----
+
+That struct is intentionally boring. The interesting part is the transition logic because that is where contradictory state either leaks in or gets rejected.
+
+=== Exhaustive match is a logic checker
+
+This method is the chapter's center of gravity. Read the match arms carefully.
+
+[source,rust]
+----
+include::../src/ch03/order_book.rs[tag=apply_event]
+----
+
+The `Add` arm rejects duplicates. The `Cancel` and `Execute` arms both funnel into a reduction path that checks the remaining shares before mutating anything. Most importantly, the closed-order case is explicit. If the order is already closed, the transition fails immediately. There is no half-state where the shares changed anyway and the status update gets forgotten later.
+
+`match` is doing two jobs here. Syntactically, it is a branch construct. Semantically, it is a completeness check. In many languages a `switch` or `if` ladder can quietly miss a case until production data wanders into it. Rust enums pair with `match` so the compiler can ask a more useful question: have you handled every shape this value can legally take?
+
+This is where exhaustive matching starts paying rent. Every legal combination of event and state gets handled. Every illegal one has to be named. The compiler is no longer checking syntax. It is checking whether your business logic forgot a branch.
+
+Nasdaq's protocol spec is dozens of pages long. Your order book needs only the parts that can still hurt you after the bytes are parsed.
+
+=== Replay the stream into state
+
+The order book is only useful if it can consume the parsed feed directly.
+
+[source,rust]
+----
+include::../src/ch03/order_book.rs[tag=replay_stream]
+----
+
+This function is short because chapter 2 already did the hard separation. The feed handler yields `MessageView`. `TryFrom` turns that into `BookEvent`. `apply` mutates the book or returns a named error. Each layer does one job and hands the next layer something smaller and more precise.
+
+That stepwise narrowing is worth naming because it is a reusable Rust pattern. Start with a broad representation close to the wire. Convert it into a domain event with stronger meaning. Apply that event to state with the narrowest API that still expresses the business rule. Each conversion throws away states the next layer should never have to think about.
+
+Run the chapter 3 tests.
+
+[source,shell]
+----
+cargo test --test integration_ch03
+----
+
+The happy-path test replays a deterministic stream with two orders, one execute, and two cancels. At the end there are zero open orders and two closed ones with explicit reasons. The failure test tries to execute more shares than remain and checks that the book rejects the transition instead of drifting into nonsense.
+
+That is the real win in this chapter. Not that the code compiles. That the bad state has a name and gets stopped at the boundary.
+
+=== Exercise
+
+Replay the chapter 3 order-flow fixture through the order book and confirm that every order ends either open with the correct remaining shares or closed for an explicit reason, with zero panics.

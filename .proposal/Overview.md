@@ -32,7 +32,11 @@ The finance domain is deliberately shallow. You don't need to know what a dark p
 
 **Learn by doing, not by reading about doing.** Every chapter has one exercise. Every exercise runs against real Nasdaq ITCH binary data, freely available from Nasdaq's public FTP server. The reader sees real output from the first page.
 
+**Teach how, not about.** The prose is organized around concrete reader questions: how to make the next part work, why the naive implementation failed, what tradeoff now matters, and which evidence supports the next choice. Definitions follow contact with the problem.
+
 **Senior engineer voice.** No hand-holding on concepts the reader already knows. No explaining what a thread is. The book meets the reader where they are and moves fast.
+
+**Reader-led narrative.** The reader is the protagonist. Chapters track their attempts, compiler errors, measurements, and design decisions. The author does not stand at the front of the room explaining Rust from a distance.
 
 **The compiler is the teacher.** Several exercises ask the reader to introduce a bug deliberately — a data race, a use-after-free equivalent, undefined behavior. The chapter is about understanding what happens and why the compiler either catches it or doesn't.
 
@@ -44,7 +48,7 @@ The finance domain is deliberately shallow. You don't need to know what a dark p
 
 ## Target Reader
 
-**Primary:** Senior software engineers (5+ years) coming from C++, Go, Python, or Java who want to add Rust to their toolkit for performance-sensitive work. They've read TRPL or equivalent and need a project to make it real.
+**Primary:** Senior software engineers (5+ years) coming from C++, Go, Python, or Java who want to add Rust to their toolkit for performance-sensitive work. They do not need prior Rust depth; they need a project that teaches Rust by making it necessary.
 
 **Secondary:** Engineers in finance, systems infrastructure, or data engineering who want a credible applied context for learning Rust. They recognize the HFT domain and respect its constraints without needing it explained.
 
@@ -54,7 +58,7 @@ The finance domain is deliberately shallow. You don't need to know what a dark p
 
 - At least one systems or high-level language at production depth
 - Understanding of heap vs stack, what a pointer is, why thread safety matters
-- Familiarity with basic Rust syntax (TRPL ch. 1–4 or equivalent)
+- Willingness to read unfamiliar Rust syntax in context while building the platform
 - Enough market domain awareness to not need a glossary
 
 ### What the reader leaves with (L300)
@@ -95,6 +99,8 @@ Feed handler → Order book → Risk engine → Concurrent pipeline → Async fa
 
 The book does not explain concepts and then show examples. It creates the conditions for the reader to discover concepts by building things that don't work yet.
 
+The chapter-level question is almost always procedural: how do you make this work, why did that fail, what changed when you measured it, or what constraint just became real. "What is X?" appears when needed, but it is not the engine of the book.
+
 Each chapter follows the same structure:
 
 1. **The problem** — a real component of the platform that needs to be built
@@ -104,6 +110,8 @@ Each chapter follows the same structure:
 5. **The callback** — the next chapter opens by referencing what was just built
 
 There are no chapter debriefs. The next chapter is the debrief.
+
+Progressive discovery is non-negotiable. The reader sees code, output, errors, or measurements before they get the more abstract explanation. The concept lands after the need for it exists.
 
 ### Domain context rule
 
@@ -124,6 +132,10 @@ Three acts underneath the five parts:
 **Act two (ch. 5–10) — Building with confidence.** Not fighting anymore. Making deliberate choices with evidence. The emotional beat is competence → fluency.
 
 **Act three (ch. 11–12) — Trust.** Trusting the compiler enough to wrap unsafe C code and ship an API other people depend on. The emotional beat is fluency → mastery.
+
+### Prose shape
+
+The prose should sound authored, not templated. Sentence length varies. Paragraph shape varies. Straightforward setup moves quickly; hard ideas get more space. A chapter where every section has the same rhythm or the same amount of explanation is structurally wrong even if every fact is correct.
 
 ---
 
@@ -380,6 +392,11 @@ These decisions were arrived at deliberately and should not be revisited without
 8. **The FFI chapter (ch. 11) uses libz, not a finance library.** Motivation is real — the reader has needed it since the preamble.
 9. **"How to use this book" is not a section.** The book is self-evident.
 10. **The epilogue leads with PyO3/Python, not FPGA.** FPGA is one paragraph. Python is the real next step for 95% of readers.
+11. **The book teaches how to do the work, not abstractly about Rust concepts.**
+12. **The reader is the protagonist.** Chapters follow their actions, failures, discoveries, and progress.
+13. **Progressive discovery is mandatory.** Errors, measurements, outputs, and broken attempts come before extended explanation.
+14. **Prose must vary enough to sound human.** Repetitive cadence or uniform paragraph structure is a draft failure, not a stylistic quirk.
+15. **Section length follows complexity and payoff.** Important ideas get more room; low-complexity setup gets less.
 
 ---
 

@@ -6,6 +6,10 @@ The reader is the protagonist. The prose narrates their progress. The author is 
 
 This changes the narrative stance of the entire book. Most technical writing positions the author as the expert delivering knowledge to a student. This book treats the reader as a senior engineer doing work, and the prose as the voice that observes and contextualizes what they're doing.
 
+The operative question on the page is usually not "What is this concept?" It is "How do you get this working?" or "Why did this attempt fail?" When the book needs to define a concept, the definition arrives after the reader has touched the problem that made the concept matter.
+
+The reader is assumed to be an experienced engineer, not an experienced Rust engineer. They know what a stack frame is. They know what a hash map is. They may have never seen ownership, borrowing, trait bounds, or pattern matching in Rust. Meet them at that boundary. Do not flatten engineering context they already have, and do not skip the Rust-specific meaning they still need.
+
 ---
 
 ## Active Voice, Reader-Led
@@ -19,6 +23,54 @@ The reader acts. The prose follows.
 > "You write the obvious thing. The compiler stops you. Somewhere in that error message is the first real thing you'll learn about Rust."
 
 The second version doesn't explain what's about to happen. The reader is already in it. Use "you" throughout — not "we." "We" implies the author is present, working alongside the reader. That's false. "You" is honest.
+
+Each section should be legible as a small journey: a thing the reader tries, a thing that resists, the clue that changes how they see it, and the working version on the other side. If one of those beats is missing, the section often reads like documentation instead of teaching.
+
+## Teach How, Not About
+
+Concept-first prose creates false confidence. The reader can recognize a definition and still have no idea what to do next.
+
+**Wrong:**
+> "Borrowing is Rust's mechanism for taking references to data without transferring ownership."
+
+**Better:**
+> "Take a slice of the message body instead of allocating a new buffer. Now try to mutate the source bytes while that slice is still alive. The compiler objects for a reason you can use."
+
+The second version creates an action, a failure, and a reason to care. The terminology can come after that. A reader who has already seen the constraint land will remember the name. A reader who only got the name usually won't.
+
+If a paragraph can be summarized as "here is information about Rust," it is probably too static. The book should usually be answering one of these:
+
+- How do you make the next piece of the system work?
+- Why did the obvious implementation fail?
+- What tradeoff just became unavoidable?
+- What evidence tells you which version is better?
+
+## Assume Senior Engineers, Not Rust Experts
+
+The book should not require the reader to complete another Rust book before this one starts. That defeats the point of the project-driven approach.
+
+**Wrong:**
+> "Read the first four chapters of TRPL, then come back."
+
+**Better:**
+> "You do not need prior Rust depth here. You do need the willingness to read unfamiliar syntax in context while you build something real."
+
+The distinction matters. Senior engineers can absorb new syntax quickly when it is attached to a live problem. What they resent is being told to leave the book and complete prerequisite homework before the real work begins.
+
+## Progressive Discovery
+
+The reader should encounter the artifact before the lecture about the artifact.
+
+That means code before commentary, error output before explanation, measurement before conclusion, and design pressure before abstraction. The compiler is not a grading mechanism at the end of the section. It is part of the section's teaching surface.
+
+Use patterns like these deliberately:
+
+- Run the code, then inspect the output.
+- Compile the broken version, then read the error.
+- Compare two implementations, then name the tradeoff.
+- Measure the hot path, then explain why it is hot.
+
+When in doubt, move explanation later.
 
 ---
 
@@ -94,6 +146,19 @@ The compiler is talking to the reader directly. Let that conversation happen bef
 > "Try to compile this. Read the error before you read the next paragraph."
 
 That instruction gives the reader agency. They discover before they're told. The concept that follows feels earned rather than delivered. By the end of the book the reader should understand the compiler as the thing that helped them build this — not the thing they were fighting.
+
+## Human Cadence
+
+Human prose varies because decisions vary. A section that introduces a sharp constraint may open with two short sentences. A section that walks through a tradeoff may need a longer paragraph. A chapter where every paragraph has the same width, every section opens the same way, and every sentence carries the same rhythm reads generated even when the content is technically correct.
+
+Vary on purpose:
+
+- Use short sentences when pressure rises or an implication needs to land.
+- Use longer paragraphs when a hard idea needs stepwise unpacking.
+- Let some sections turn on an error message, others on a measurement, others on a design choice.
+- Avoid repeating opener formulas like "X is...", "In this section...", or "Now that you have..." in adjacent sections.
+
+The goal is not decorative style. The goal is for the prose shape to match the thinking work the reader is doing.
 
 ---
 

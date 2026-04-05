@@ -24,23 +24,34 @@ chapters:
     title: Parse a binary market feed from raw bytes
     source_paths:
       - src/ch01/parser.rs
+      - src/ch01/move_semantics_broken.rs
     test_paths:
       - test/ch01/parser_smoke.rs
-    status: scaffolded
+      - test/integration_ch01.rs
+    status: written
   - id: 2
     file: chapters/02_zero_copy_message_handling.adoc
     slug: zero-copy-message-handling
     title: Handle all message types without allocating on the hot path
-    source_paths: []
-    test_paths: []
-    status: planned
+    source_paths:
+      - src/ch02/mod.rs
+      - src/ch02/feed.rs
+      - src/ch02/aliasing_broken.rs
+    test_paths:
+      - test/ch02/feed_handler_smoke.rs
+      - test/integration_ch02.rs
+    status: written
   - id: 3
     file: chapters/03_order_book_state_modeling.adoc
     slug: order-book-state-modeling
     title: Build an order book that cannot hold a contradictory state
-    source_paths: []
-    test_paths: []
-    status: planned
+    source_paths:
+      - src/ch03/mod.rs
+      - src/ch03/order_book.rs
+    test_paths:
+      - test/ch03/order_book_smoke.rs
+      - test/integration_ch03.rs
+    status: written
   - id: 4
     file: chapters/04_stream_full_day_memory_stable.adoc
     slug: stream-full-day-memory-stable

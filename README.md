@@ -2,6 +2,8 @@
 
 Project-driven Rust book repository with reproducible source code, confidence tests, and multi-format publishing.
 
+This repository is pinned to Rust stable 1.94.1 via [rust-toolchain.toml](rust-toolchain.toml) and the container image.
+
 ## Repository Layout
 
 1. .proposal: framing, chapter metadata, and editorial decisions.
@@ -33,6 +35,14 @@ bash scripts/validate-includes.sh
 ```bash
 bash scripts/build-book.sh
 ```
+
+On Windows, use:
+
+```bat
+scripts\build-book.bat
+```
+
+The batch wrapper uses Docker directly if it is on the Windows PATH, or via `wsl.exe` if Docker is installed inside WSL2. If the `book-rust-toolchain` image does not exist yet, the wrapper builds it first, runs the containerized book build with output directed to `/book/out`, and copies the rendered artifacts into `.out/` at the repository root.
 
 ## Docker Workflow
 
