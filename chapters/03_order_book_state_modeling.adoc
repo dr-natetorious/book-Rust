@@ -119,8 +119,10 @@ That is the real win in this chapter. Not that the code compiles without errors.
 
 The dry observation for this chapter: good state design lets the compiler ask "what could go wrong?" and then enforces that you answer every question explicitly.
 
-=== Exercise
+=== Summary
 
-Replay this chapter's order-flow fixture through the order book, process every Add, Execute, Cancel, and Replace message in sequence, and confirm that every order ends either open with the correct remaining shares or closed for an explicit reason—with zero panics and zero invalid state combinations.
+This chapter moved the system from message processing to state correctness. The important win is not that events apply in sequence; it is that contradictory states became unrepresentable in the type model itself. Enums and exhaustive matching now do structural work that booleans and ad hoc conditionals cannot do reliably under growth. That means invalid transitions fail at the boundary with named reasons instead of silently drifting state over time.
 
-Now the parser works, the feed handler streams without allocating, and the order book captures state in types that make nonsense impossible. But you have been working with comfortable fixture sizes. <<ch-stream-full-day-memory-stable,Streaming a full day>> asks a harder question: what happens when input size stops being friendly and you have a full day of real market data?
+You should feel a different kind of confidence at this point. Instead of trusting every caller to remember legal combinations, you can trust the state shape and match completeness checks to force explicit handling for each lifecycle branch. This changes review quality. Questions become specific: is this transition valid for this state variant, and does this error belong at this boundary? Those are design questions with deterministic answers, not style preferences.
+
+To strengthen this chapter further, keep adding interleaved transition fixtures and ensure final state remains deterministic under replay. The more varied the sequence, the more value you get from type-driven constraints. Now that state integrity is enforceable, the next pressure is scale: <<ch-stream-full-day-memory-stable,streaming a full day>> asks whether these guarantees hold when input size is no longer polite.

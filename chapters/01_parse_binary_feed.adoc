@@ -161,6 +161,10 @@ When the tests pass you know three things: the framing is correct, the field ext
 
 Copying the stock symbol into the struct (`symbol: [u8; 8]`) works but is wasteful. The stock symbol is already in the input buffer. Why copy it? That question is the entire engine of <<ch-zero-copy-message-handling,zero-copy message handling>>, so hold it for now. In this chapter, you copy because it is simple. Simplicity buys you correctness. Efficiency comes after.
 
-=== Exercise
+=== Summary
 
-Run the parser against this chapter's fixture and print every Add Order record with its order reference, side, shares, stock symbol, and price. Verify the test passes and no compile errors occur.
+This chapter established the baseline discipline for the rest of the book: parse first, optimize later, and let ownership rules shape design early rather than patch bugs late. You now have a parser that handles Add Order records correctly, fails on malformed payloads in predictable ways, and exposes where values move versus where they remain borrowable. That sounds small, but it is the first hard threshold in Rust work. Until this point, ownership is vocabulary; after this point, ownership is a mechanical tool you can apply line by line.
+
+The practical learning outcome is not just that tests pass. It is that you can look at any line that touches a parsed message and explain why it owns, borrows, or clones data, and what failure mode that choice prevents. That clarity is what keeps parser refactors stable. If you add a new fixture and an error moves, you can reason about whether the move came from framing, field extraction, or ownership transfer, instead of treating the parser as a black box.
+
+The right way to practice from here is to keep tightening parser confidence without widening scope. Add malformed-length fixtures, add mixed valid/invalid streams, and confirm failures stay deterministic after each change. As long as your integration tests keep proving boundary correctness, you are building reusable parser confidence rather than one-off success. <<ch-zero-copy-message-handling,Zero-copy message handling>> keeps the same correctness bar and removes the allocation cost you accepted in this first pass.

@@ -138,8 +138,10 @@ Treat this chapter as complete only when all of the following are true:
 3. Corrupt input paths fail deterministically without exposing partial output.
 4. Contract tests pass and include at least one UB-focused check under Miri workflow.
 
-=== Exercise
+=== Summary
 
-Run the safe decompression wrapper against `test/fixtures/ch11_mock_compressed.hex`, decode the payload, then intentionally corrupt the declared length and confirm your wrapper returns a typed `LibzError::CorruptInput`.
+This chapter reframed unsafe code from "risky implementation detail" to "auditable boundary design." The decompression step now lives inside the system with explicit contracts, typed failures, and deterministic test coverage. That is the real value: not merely calling C from Rust, but constraining that call so downstream code cannot accidentally violate preconditions it does not even know exist.
 
-Your feed handler now handles real data from start to finish. Everything works, all pieces fit together, and the type system has verified thread safety. xref:12_publish_crate_semver_api.adoc#ch-publish-crate-semver-api[API publishing and semver] asks: how do you package this as a crate that another team can depend on without shooting themselves in the foot?
+You should now be able to reason about unsafe work in two layers. The inner layer is minimal and mechanical: pointer validity, length invariants, status-code handling. The outer layer is ergonomic and safe: stable Rust types, explicit errors, and predictable behavior under corruption. This split is what makes unsafe code maintainable in a multi-team repository. Without it, every FFI touchpoint becomes a latent incident source.
+
+The next learning step is to harden contract drift detection. Add more corruption fixtures that fail for distinct reasons, and make Miri part of release discipline when unsafe-adjacent code changes. Keep rerunning integration tests whenever FFI signatures or buffer assumptions move, because this boundary fails expensively when left implicit. With decompression now integrated, the platform is functionally end to end. xref:12_publish_crate_semver_api.adoc#ch-publish-crate-semver-api[API publishing and semver] turns that working system into a durable dependency contract.

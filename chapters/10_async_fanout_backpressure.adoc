@@ -133,8 +133,10 @@ Treat this chapter as complete only when all of the following are true:
 3. No synchronous mutex guard is held across `.await` in task code.
 4. Lane saturation policy is documented and implemented consistently.
 
-=== Exercise
+=== Summary
 
-Run the async fan-out with three consumers and a bounded channel size of `2`, then print `backpressure_events` for a fast run and a slow-consumer run so you can compare pressure behavior directly.
+This chapter made fan-out behavior explicit under uneven consumer latency. Slow lanes no longer create mysterious global slowdown; they now produce measurable pressure signals and policy-visible consequences. That is the major outcome. Backpressure moved from an emergent symptom to a designed mechanism you can observe, tune, and explain.
 
-Your feed handler is now complete: it parses efficiently (iterators, measurement), tolerates corruption (structured errors), enforces risk checks (types), shares state safely (Arc/Mutex), runs concurrently (threads and async), handles multiple consumers (fan-out), and makes bottlenecks visible (backpressure). xref:11_ffi_libz_safe_wrapper.adoc#ch-ffi-libz-safe-wrapper[FFI decompression] adds one final piece: you have been manually decompressing files from the start. Now make that part of the system.
+You should now be able to read async lane behavior as operational telemetry, not just implementation detail. Queue depth, send wait time, and saturation events tell you where coordination is healthy and where it is masking capacity mismatch. Combined with the mutex-across-await guardrail, this gives you a practical checklist for writing async code that remains correct under scheduler movement and load spikes.
+
+From here, deepen instrumentation before adding complexity. Keep lane metrics stable across fixture runs, encode saturation policy in tests when modes evolve, and treat async coordination changes as performance-sensitive architecture work rather than harmless refactors. With fan-out now pressure-aware and testable, the remaining manual gap is ingest setup. xref:11_ffi_libz_safe_wrapper.adoc#ch-ffi-libz-safe-wrapper[FFI decompression] moves that final boundary into code.

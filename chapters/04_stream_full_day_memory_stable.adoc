@@ -129,13 +129,10 @@ Interpret the suite in three groups:
 
 If group 1 fails, stop and fix parser boundaries first. If group 2 fails, your error handling is not preserving safety under bad input. If group 3 fails, your throughput tuning later in <<ch-profile-and-optimize-hot-path,hot-path profiling>> will be misleading because allocator churn is already distorting baseline performance.
 
-=== Exercise
+=== Summary
 
-Replay the fixture through `FileFrameIter`, log frame offsets for the first ten records, and verify two properties:
+This chapter changed the system's scaling behavior. You no longer need memory proportional to feed size just to make progress. Iterator boundaries, lazy pull execution, and frame-local processing now let you traverse long streams while keeping memory pressure predictable. That shift matters because it protects every later chapter from hidden preconditions like "works only on small fixtures" that collapse when real data arrives.
 
-1. Offsets advance deterministically with no gaps or overlaps.
-2. Memory usage remains flat across the full run.
+The meaningful learning outcome is that you can now prove memory behavior, not assume it. Frame offsets, truncation points, and allocation patterns are observable and testable, which means refactors can preserve scale properties with the same discipline used for correctness. When replay fails, you can tell whether the problem is framing, allocation regression, or downstream logic, instead of treating all failures as generic performance noise.
 
-Then run `cargo test --test integration_ch04` and keep the output that proves zero unintended allocations.
-
-You now have a feed pipeline that scales with stream length instead of RAM size. The order book can process a full day without preloading the world. The next failure is not memory. The next failure is trust in input quality. <<ch-error-design-under-corruption,Error design under corruption>> turns corrupt records into explicit, testable outcomes.
+From here, continue hardening around hostile inputs and boundary cases. Add truncated fixtures, keep offset assertions stable, and compare short-run and long-run allocation behavior so surprises appear in tests first. With memory stability in place, the next dominant risk is trust in input quality. <<ch-error-design-under-corruption,Error design under corruption>> turns corruption from an implicit threat into an explicit control surface.

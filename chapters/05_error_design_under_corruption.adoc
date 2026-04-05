@@ -176,14 +176,10 @@ When an error type is hard to test, it is usually hard to operate. Add structure
 
 The practical payoff of this chapter is visibility. You now have a replay surface that can report exactly what failed and why, without sacrificing deterministic control flow.
 
-=== Exercise
+=== Summary
 
-Run replay on `test/fixtures/ch05_corrupt_stream.hex` in both `FailFast` and `SkipBadRecords` modes. For each run, print:
+This chapter gave the pipeline a failure contract instead of failure folklore. Corruption is no longer an ambiguous runtime surprise; it is now a typed outcome under an explicit policy boundary. Whether you choose fail-fast or skip-bad-records, the behavior is deterministic, observable, and testable. That is the difference between a system that appears robust and one that can be operated under pressure.
 
-1. Total applied records.
-2. Total rejected records.
-3. Every rejected offset and variant.
+The core learning outcome is practical error design. You can now build error surfaces that carry enough structure for both operators and tests to reason about what happened, where it happened, and what should happen next. This eliminates brittle string matching, reduces incident ambiguity, and makes replay behavior auditable across runs. When policy changes, the tests fail in targeted ways instead of silently shifting semantics.
 
-Verify that `FailFast` returns after first reject and `SkipBadRecords` continues processing valid frames.
-
-Your pipeline now has explicit failure contracts instead of ad hoc branches. You can ingest under corruption without guessing what happened. <<ch-traits-generics-for-risk,Traits and generics for risk>> builds on that boundary and introduces pre-trade risk checks enforced by traits and types.
+The right follow-on work is to increase corruption variety while preserving deterministic policy behavior. Add multi-fault fixtures, keep offset ordering assertions stable, and guard against regressions where fail-fast starts applying extra records before stopping. With explicit failure boundaries now in place, the next step is applying the same explicitness before state mutation. <<ch-traits-generics-for-risk,Traits and generics for risk>> moves that discipline into pre-trade decisions.

@@ -138,20 +138,10 @@ The Epilogue will sketch that bridge via PyO3: call your Rust feed handler from 
 
 But that is not in this chapter. This chapter ends the book part. Your platform is feature-complete, published, and ready for production teams to build on.
 
-=== Exercise
+=== Summary
 
-Publish the crate API locally by generating a snapshot with `FeedClientBuilder` and `JsonFormat`, then change the public version from `1.x.y` to `2.0.0` and verify your semver gate classifies that change as breaking.
+This chapter closed the loop between implementation and dependency stewardship. The platform is no longer just correct and fast in your repository; it is now shaped as a public contract other teams can consume without guessing hidden rules. Typestate construction, sealed extension points, and explicit semver classification give you a release surface that stays predictable as requirements evolve.
 
-You came here knowing systems programming and production infrastructure but not Rust. You now understand:
-- Ownership and move semantics, from binary parsing
-- Borrowing and lifetimes, from zero-copy
-- Enums and pattern matching, from state machines
-- Traits and generics, from risk checks
-- Smart pointers and interior mutability, from shared state
-- Concurrency models (threads and async), from measurement
-- Unsafe and FFI, from real C integration
-- API design and versioning, from shipping to production
+You should now be able to evaluate API changes through downstream impact rather than local convenience. That means identifying whether a change is compatible before publishing, proving behavior stability with integration tests, and treating release gates as engineering controls rather than paperwork. A good public API is not one that is clever in isolation; it is one that remains understandable and low-drama under repeated upgrades.
 
-The toolchain, the borrow checker errors, the compiler's insistence on exhaustive matching—all of these stopped being obstacles and became a development superpower. You cannot ship undefined behavior. You cannot have data races. You cannot forget a case. The compiler is on your side.
-
-The Epilogue shows where this leads: PyO3 for Python integration, Tokio for production infrastructure, and honest perspective on where the real FPGA systems go.
+At this point, the book's technical arc is complete: binary parsing, zero-copy handling, state-safe transitions, corruption-aware error policy, trait-driven risk boundaries, shared concurrency, measured optimization, async pressure control, safe FFI integration, and contract-aware publishing. The next step is not another core Rust primitive. It is applying this engine in downstream workflows, which is exactly where the epilogue bridge should go: Python integration, analytics handoff, and informed tradeoffs between software architecture and lower-latency infrastructure paths.

@@ -153,8 +153,10 @@ Treat this chapter as complete only when all of the following are true:
 3. Correctness tests still pass after optimization.
 4. Your concurrency model decision is documented with measured evidence.
 
-=== Exercise
+=== Summary
 
-Run the baseline profile on your fixture stream, compare the baseline and optimized allocation counts, then choose your concurrency model (`Threads` or `Async`) for the next stage based on the evidence.
+This chapter established a repeatable optimization method instead of a sequence of one-off tuning tricks. You now have a baseline, a constrained change loop, and artifact-level validation that ties source edits to measurable behavior. That matters because most performance regressions are not caused by lack of effort; they are caused by weak attribution. By forcing one-change, one-measurement discipline, you can now tell whether a speedup is real, reproducible, and worth keeping.
 
-You have measured the hot path and chosen a concurrency model. The parser and order book can run independently without contention if you give each its own thread. <<ch-threads-channels-order-book-pipeline,Threaded pipeline architecture>> makes that split explicit.
+The learning outcome is practical evidence literacy. You can interpret allocation counters and assembly output together, and you can distinguish "this feels faster" from "this path removed repeat allocator calls in steady state." That shift makes team performance work composable. Another engineer can read your evidence trail and independently verify the same conclusion, which is the only kind of optimization knowledge that survives code churn.
+
+From here, keep attaching throughput and allocation evidence to every hot-path change, especially when workload shape changes. Treat `cargo asm` diffs and fixture metrics as first-class review artifacts, not optional extras. Once this discipline is stable, the architecture decision from this chapter can be implemented cleanly. <<ch-threads-channels-order-book-pipeline,Threaded pipeline architecture>> turns that measured direction into concrete parser/book separation.

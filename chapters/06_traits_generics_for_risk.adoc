@@ -152,14 +152,10 @@ The strongest signal that your risk boundary is healthy is boring tests: clear a
 
 The immediate payoff is operational confidence. Orders that violate policy fail before they mutate state, and that guarantee is enforced by types, not convention.
 
-=== Exercise
+=== Summary
 
-Implement a third `RiskCheck` for per-symbol share caps. Run the same fixture orders through both `GenericRiskEngine` and `DynRiskEngine`, then report:
+This chapter made risk policy enforceable in code shape, not just in documentation. By defining behavior through traits and choosing dispatch mode deliberately, you now have a boundary that is both adaptable and auditable. The important gain is that policy can no longer leak through ad hoc call-site logic; it is centralized in contracts that tests can validate and reviewers can reason about.
 
-1. Which orders were accepted.
-2. Which orders were rejected.
-3. Which `RiskViolation` variant fired for each rejection.
+The learning outcome here is not "generics are faster" or "dynamic dispatch is flexible" in isolation. It is that you can separate semantic parity from performance choice. If two engines do not reject and accept the same inputs the same way, dispatch discussion is premature. Once parity is proven, you can choose compile-time specialization or runtime flexibility based on measured constraints, deployment goals, and change cadence.
 
-Confirm identical outcomes between both engines.
-
-You now have a risk boundary that is explicit, testable, and hard to bypass accidentally. <<ch-shared-state-lifetimes-pointers,Shared state and lifetimes>> extends this design into shared state, where multiple components need concurrent access to live risk data.
+From here, grow policy surface area without losing determinism. Add additional checks, keep rule-composition order explicit, and keep parity tests intact as implementations evolve. That discipline becomes more important once live state is shared across components. <<ch-shared-state-lifetimes-pointers,Shared state and lifetimes>> extends this risk boundary into concurrent ownership territory.

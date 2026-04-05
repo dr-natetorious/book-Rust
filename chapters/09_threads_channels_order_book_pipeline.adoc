@@ -131,8 +131,10 @@ Treat this chapter as complete only when all of the following are true:
 3. A malformed message returns a typed `PipelineError` with useful context.
 4. Worker shutdown behavior is deterministic under both normal completion and failure.
 
-=== Exercise
+=== Summary
 
-Run the threaded pipeline against your fixture stream, confirm all events apply in order, then inject one malformed event and verify that the returned `PipelineError` includes the frame offset that failed and a meaningful reason.
+This chapter converted the concurrency decision from chapter 8 into a deterministic threaded pipeline. Parser and book now run as separate responsibilities with typed transfer boundaries, which means throughput gains do not depend on shared mutable shortcuts. The key win is not just parallelism. It is ownership clarity under concurrency: one thread owns parsing, one thread owns book mutation, and channels own in-flight handoff.
 
-You now have independent parser and book threads communicating safely through a channel. That solves the contention problem but creates a new one: downstream consumers (risk engine, reporting) still contend for access to the order book. xref:10_async_fanout_backpressure.adoc#ch-async-fanout-backpressure[Async fan-out with explicit backpressure] adds the final pattern.
+You should now be able to reason about channel capacity as an operational parameter instead of a default constant. Small buffers surface downstream pressure quickly; larger ones absorb bursts but can hide chronic lag. That tradeoff only becomes useful if event ordering and shutdown behavior remain deterministic, which this chapter's structure and tests now make explicit.
+
+The strongest follow-on work is to keep proving determinism as orchestration evolves. Add replay state hashing, compare single-loop and threaded throughput under the same fixture, and keep failure propagation paths explicit when worker logic changes. Once parser/book concurrency is stable, the next bottleneck is multi-consumer fan-out behavior under uneven lane latency. xref:10_async_fanout_backpressure.adoc#ch-async-fanout-backpressure[Async fan-out with explicit backpressure] tackles that directly.

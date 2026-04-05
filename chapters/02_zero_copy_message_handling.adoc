@@ -193,6 +193,10 @@ This chapter's exercise leaves you with a feed handler that can scan the stream 
 
 <<ch-order-book-state-modeling,Order-book state modeling>> will take these borrowed messages and feed them into an order book that must turn them into live state.
 
-=== Exercise
+=== Summary
 
-Run the feed handler against this chapter's mixed-message fixture, print the Add, Execute, and Cancel counts, and verify the scan completes without allocating on the hot path. Confirm the test `zero_allocation_hot_path` passes.
+This chapter converted ownership from a convenience model to a throughput model. The parser still does the same logical job, but it now does it by borrowing wire data instead of copying it into fresh allocations on every message. That shift is the first serious performance win in the book, and it is also the first place Rust's lifetime rules become operationally valuable instead of conceptually intimidating. You are no longer paying for defensive copies just because the language makes borrowing explicit.
+
+The real takeaway is control. You can now decide, field by field, whether data should remain tied to input buffer lifetime or be promoted to owned state for longer survival. That decision boundary is what keeps hot paths fast and downstream logic safe. If a change accidentally introduces hidden allocation, your allocation-sensitive tests now catch it quickly, which means performance behavior is becoming testable rather than anecdotal.
+
+The next learning step is to keep that zero-copy discipline while broadening message coverage. Add variants, verify exhaustive handling, and keep asserting no-allocation behavior on the scan path so regressions fail in CI instead of in production replay. <<ch-order-book-state-modeling,Order-book state modeling>> uses these borrowed messages to build durable state transitions, where correctness pressure moves from parsing bytes to preserving business invariants.

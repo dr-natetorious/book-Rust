@@ -161,8 +161,10 @@ Add one extra check to your own branch: assert final positions are deterministic
 
 The dry observation for this chapter: by the time lifetimes stop feeling hostile, you realize they were documenting your architecture before you did. And ownership decision trees replace guessing with paths.
 
-=== Exercise
+=== Summary
 
-Build a shared live risk state that serves read-only views for reporting while two worker threads apply fills, and print the final per-symbol position map after all workers join.
+This chapter resolved the ownership topology problem that appears once multiple components need the same live data. You now have a concrete decision model for borrowed views, single-thread interior mutability, and cross-thread synchronization, and you have seen the compiler reject unsafe shortcuts before runtime can punish them. That is a major maturity point in Rust systems work: shared state is no longer improvised, it is designed.
 
-Your feed handler, order book, error handling, risk checks, and shared state are all in place. The platform can now process market data, maintain live state safely, and enforce preconditions. <<ch-profile-and-optimize-hot-path,Hot-path profiling and optimization>> asks: can it do all of this in under a microsecond per message?
+The operational outcome is that lock boundaries and mutability costs are now visible choices. You can reason about guard scope, contention risk, and runtime borrow checks in terms of workload behavior, not just syntax rules. That makes code review sharper. The question shifts from "does this compile" to "does this ownership shape match expected access patterns under load," which is the question senior teams actually need answered.
+
+The next step is to stress this design under read-heavy and write-heavy mixes so container choices remain evidence-driven. Keep deterministic state assertions across repeated runs to catch subtle concurrency regressions as architecture evolves. With state sharing now explicit and safe, the remaining pressure is raw throughput. <<ch-profile-and-optimize-hot-path,Hot-path profiling and optimization>> asks how much headroom the pipeline still has.
