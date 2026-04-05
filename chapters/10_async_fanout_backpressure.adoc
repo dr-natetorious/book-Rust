@@ -1,4 +1,4 @@
-== Handle a live feed without blocking on slow consumers
+== Chapter 10: Handle a live feed without blocking on slow consumers
 
 Your chapter 9 exercise gave you a parser thread and a book thread that pass ownership safely through a channel. That architecture is clean until one downstream consumer slows down and starts dictating the pace for everyone else. This chapter turns one handoff into async fan-out with explicit backpressure accounting.
 
@@ -28,6 +28,7 @@ Feed plants care less about average consumer speed than about tail latency in on
 
 Run the confidence tests and check that `backpressure_events` is non-zero when the slow consumer delay is enabled.
 
+.Running the Chapter 10 integration test
 [source,shell]
 ----
 cargo test --test integration_ch10
@@ -41,6 +42,7 @@ Everything is concurrent and mostly calm until one subscriber blinks. Then the q
 
 Try to compile this. Read the error before you read the next paragraph.
 
+.Holding a mutex guard across an await point: a bug the compiler catches
 [source,rust]
 ----
 include::../src/ch10/mutex_across_await_broken.rs[tag=mutex_across_await_broken]
@@ -55,7 +57,10 @@ error: future cannot be sent between threads safely
 	|     ^^^^^^^^^^^^ future created by async block is not `Send`
 ----
 
-The rule is direct: do not hold synchronous mutex guards across `.await` points in spawned tasks.
+[WARNING]
+====
+*Holding a synchronous mutex across an `.await` point is undefined behavior.* The compiler will reject the code at compile time. Use `tokio::sync::Mutex` in async contexts, not `std::sync::Mutex`.
+====\n\nThe rule is direct: do not hold synchronous mutex guards across `.await` points in spawned tasks.
 
 === Exercise
 

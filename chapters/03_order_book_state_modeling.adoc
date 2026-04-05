@@ -10,6 +10,7 @@ An order book is only a map from order reference to current state, but the state
 
 The easiest bad model is a struct full of booleans.
 
+.The naive state model: booleans allow contradictory combinations
 [source,rust]
 ----
 include::../src/ch03/order_book.rs[tag=naive_order_state]
@@ -21,6 +22,7 @@ This is a familiar problem even if the Rust syntax is new. In Java or Python, a 
 
 Use an enum instead.
 
+.The correct state model: enum with exhaustive variants
 [source,rust]
 ----
 include::../src/ch03/order_book.rs[tag=order_state]
@@ -34,6 +36,7 @@ If you know tagged unions from C, algebraic data types from functional languages
 
 The feed handler already classified the wire records. The order book needs a similar classification for state transitions.
 
+.Typed state transitions: add, cancel, and execute as distinct operations
 [source,rust]
 ----
 include::../src/ch03/order_book.rs[tag=book_event]
@@ -45,6 +48,7 @@ That difference is easy to underestimate if you have spent years around APIs tha
 
 The book itself is just a map keyed by `order_ref`.
 
+.The OrderBook container: minimal storage, logic in transitions
 [source,rust]
 ----
 include::../src/ch03/order_book.rs[tag=order_book]
@@ -56,12 +60,18 @@ That struct is intentionally boring. The interesting part is the transition logi
 
 This method is the chapter's center of gravity. Read the match arms carefully.
 
+.Exhaustive match enforces valid transitions: every state-event pair is explicit
 [source,rust]
 ----
 include::../src/ch03/order_book.rs[tag=apply_event]
 ----
 
 The `Add` arm rejects duplicates. The `Cancel` and `Execute` arms both funnel into a reduction path that checks the remaining shares before mutating anything. Most importantly, the closed-order case is explicit. If the order is already closed, the transition fails immediately. There is no half-state where the shares changed anyway and the status update gets forgotten later.
+
+[NOTE]
+====
+*Exhaustive matching is not pedantry.* It is a compile-time check that every legal state-event pair is handled. If a new message type gets added to the feed, the compiler will refuse to compile until you handle it.
+====
 
 `match` is doing two jobs here. Syntactically, it is a branch construct. Semantically, it is a completeness check. In many languages a `switch` or `if` ladder can quietly miss a case until production data wanders into it. Rust enums pair with `match` so the compiler can ask a more useful question: have you handled every shape this value can legally take?
 
@@ -73,6 +83,7 @@ Nasdaq's protocol spec is dozens of pages long. Your order book needs only the p
 
 The order book is only useful if it can consume the parsed feed directly.
 
+.Replaying the parsed stream into a typed state machine
 [source,rust]
 ----
 include::../src/ch03/order_book.rs[tag=replay_stream]

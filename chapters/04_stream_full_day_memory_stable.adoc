@@ -1,4 +1,4 @@
-== Stream a full trading day without running out of memory
+== Chapter 4: Stream a full trading day without running out of memory
 
 You ended chapter 3 with an order book that survives the full fixture without panicking. That same code falls apart when input size stops being friendly. The next failure is not correctness. It is memory pressure from trying to stage more bytes than you need.
 
@@ -13,6 +13,7 @@ cargo test --test integration_ch04
 
 The parser from chapter 2 already consumes one record at a time. The missing part is a frame iterator that yields borrowed slices and advances an offset.
 
+.A frame iterator: yields borrowed payloads with advancing offset
 [source,rust]
 ----
 include::../src/ch04/stream.rs[tag=frame_iter]
@@ -26,6 +27,7 @@ Orders get added, cancelled, and replaced all day. On active sessions, cancels d
 
 Now implement `Iterator` so `next()` performs exactly one frame decode and returns immediately.
 
+.Implementing Iterator for lazy frame decoding
 [source,rust]
 ----
 include::../src/ch04/stream.rs[tag=iterator_impl]
@@ -33,12 +35,18 @@ include::../src/ch04/stream.rs[tag=iterator_impl]
 
 Run one concrete action: call `next()` twice and inspect offsets. The first item starts at `0`, the second at `29` for the fixture used in tests. If those offsets drift, your memory profile might still look flat while your parser is silently skipping bytes.
 
+[WARNING]
+====
+*Lazy iterators require discipline.* If you forget to call `next()` or consume the iterator, no work happens and no error is raised. The iterator is sitting idle. Use assertions and allocator tracking in tests to catch silent misuse.
+====
+
 The friction here is familiar: eager code usually looks simpler at first. Lazy code feels noisier because state moves into the iterator struct. The payoff is that you never hold more payload than the current frame.
 
 === Implement Iterator on your own types
 
 You also need a typed stream that yields parsed messages directly, not raw frame slices.
 
+.Composing iterators: from frames to parsed domain messages
 [source,rust]
 ----
 include::../src/ch04/stream.rs[tag=parsed_message_iter_impl]
@@ -48,6 +56,7 @@ This pattern matters because it scales: one iterator reads frame boundaries, the
 
 For file-backed inputs, move from borrowed slices to owned frame payloads and keep the same iterator shape.
 
+.A file iterator: owns payloads while maintaining iterator interface
 [source,rust]
 ----
 include::../src/ch04/stream.rs[tag=file_frame_iter]

@@ -1,4 +1,4 @@
-== Share live risk state across the platform without copying it
+== Chapter 7: Share live risk state across the platform without copying it
 
 Your risk engine from chapter 6 enforces pre-trade checks, but it still assumes a caller owns the whole state snapshot. That does not hold once feed processing, risk checks, and reporting all need current positions at the same time. Copying state per component is simple and wrong for latency.
 
@@ -19,6 +19,7 @@ Risk, book updates, and reporting all query the same symbols repeatedly while ma
 
 Try to compile this. Read the error before you read the next paragraph.
 
+.Attempting mutable access through Arc without interior mutability
 [source,rust]
 ----
 include::../src/ch07/arc_without_mutex_broken.rs[tag=arc_without_mutex_broken]
@@ -33,7 +34,10 @@ error[E0596]: cannot borrow data in an `Arc` as mutable
 	|     ^^^^^^^^^^^^^^^^ cannot borrow as mutable
 ----
 
-`Arc` shares ownership, not mutable access. The failure is useful because it removes an entire class of race-prone design before runtime.
+[WARNING]
+====
+*Thread-safe shared state is not the default.* You must ask for it explicitly with `Arc<Mutex<>>` or `Arc<RwLock<>>`. If you forget, the compiler will refuse to compile the spawned task. You do not get silent data races.
+====\n\n`Arc` shares ownership, not mutable access. The failure is useful because it removes an entire class of race-prone design before runtime.
 
 === Box, Rc, Arc: choose by ownership boundary
 
@@ -48,11 +52,13 @@ flowchart TD
 
 Local, single-threaded sharing uses `Rc<RefCell<T>>`.
 
+.Single-threaded shared state with runtime borrow checking
 [source,rust]
 ----
 include::../src/ch07/shared.rs[tag=rc_refcell_state]
 ----
 
+.Local mutation through RefCell borrow
 [source,rust]
 ----
 include::../src/ch07/shared.rs[tag=apply_fill_local]
@@ -60,11 +66,13 @@ include::../src/ch07/shared.rs[tag=apply_fill_local]
 
 Cross-thread sharing uses `Arc<Mutex<T>>`.
 
+.Cross-thread shared state with lock-based synchronization
 [source,rust]
 ----
 include::../src/ch07/shared.rs[tag=arc_mutex_state]
 ----
 
+.Shared mutation through Mutex lock
 [source,rust]
 ----
 include::../src/ch07/shared.rs[tag=apply_fill_shared]
@@ -72,6 +80,7 @@ include::../src/ch07/shared.rs[tag=apply_fill_shared]
 
 Run the chapter tests and watch the split: one test validates runtime borrow conflict for `RefCell`; another validates successful shared updates across threads.
 
+.Running the Chapter 7 integration test
 [source,shell]
 ----
 cargo test --test integration_ch07

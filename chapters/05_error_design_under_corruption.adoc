@@ -1,4 +1,4 @@
-== Handle every failure without crashing the platform
+== Chapter 5: Handle every failure without crashing the platform
 
 Your iterator pipeline from chapter 4 can run all day without blowing memory. The next problem is uglier: one corrupt record can still stop the whole replay or, worse, mutate state before failing. You need a failure model the caller can act on, not a crash and not a mystery.
 
@@ -19,12 +19,16 @@ feed error at offset 29: unsupported message type: 90
 
 That line is the entire chapter in miniature: named failure, precise location, actionable next step.
 
-On real feed days, most records are valid and a small fraction are broken by upstream tooling, truncation, or mixed capture boundaries. The platform decision is not whether corruption exists. It is whether you stop immediately or continue while preserving evidence.
+[WARNING]
+====
+*Choosing between FailFast and SkipBadRecords is an operational decision, not a code smell.* The choice sticks to the architecture and gets made before event processing starts. There is no runtime flag or per-message override. Once you choose, the error surface reflects that choice.
+====\n\nOn real feed days, most records are valid and a small fraction are broken by upstream tooling, truncation, or mixed capture boundaries. The platform decision is not whether corruption exists. It is whether you stop immediately or continue while preserving evidence.
 
 === Result and the ? operator as design pressure
 
 Start by making the policy explicit.
 
+.Defining the failure handlingpolicy: FailFast or SkipBadRecords
 [source,rust]
 ----
 include::../src/ch05/errors.rs[tag=corruption_policy]
@@ -32,6 +36,7 @@ include::../src/ch05/errors.rs[tag=corruption_policy]
 
 Then carry that policy through replay instead of burying choices in helper branches.
 
+.Applying the policy: Result and ? operator for error propagation
 [source,rust]
 ----
 include::../src/ch05/errors.rs[tag=replay_with_policy]
@@ -43,6 +48,7 @@ include::../src/ch05/errors.rs[tag=replay_with_policy]
 
 If your error surface is one `String`, tests can only compare text. If your error is structured, tests can assert behavior.
 
+.A structured error type: enums for testable failure modes
 [source,rust]
 ----
 include::../src/ch05/errors.rs[tag=processing_error]
@@ -50,6 +56,7 @@ include::../src/ch05/errors.rs[tag=processing_error]
 
 The success path should also preserve useful summary data for monitoring and retry logic.
 
+.A report struct: success count, failure count, and failure details
 [source,rust]
 ----
 include::../src/ch05/errors.rs[tag=replay_report]
@@ -57,6 +64,7 @@ include::../src/ch05/errors.rs[tag=replay_report]
 
 Run the skip policy test and inspect what is preserved.
 
+.Running the Chapter 5 integration test
 [source,shell]
 ----
 cargo test --test integration_ch05 skip_bad_records_keeps_valid_records_moving -- --exact

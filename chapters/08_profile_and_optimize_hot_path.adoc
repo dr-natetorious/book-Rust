@@ -1,4 +1,4 @@
-== Find and fix the allocation killing your throughput
+== Chapter 8: Find and fix the allocation killing your throughput
 
 Your chapter 7 exercise left you with shared risk state that two workers can update without cloning snapshots around the process. That solved ownership and race safety, but it did nothing for throughput. The next pressure point is now visible: one tiny message-handling path still runs for every frame.
 
@@ -24,12 +24,16 @@ In this feed, add-order traffic dominates busy windows and every avoidable alloc
 
 Run the optimized profile and compare only one metric first: modeled allocations.
 
+.A measurement harness: tracking allocations and latency on the hot path
 [source,rust]
 ----
 include::../src/ch08/hot_path.rs[tag=optimized_profile]
 ----
 
-The friction here is practical: both versions parse the same data, both produce valid counts, and only one changes the cost profile. If you skip measurement, both implementations look equally correct in code review.
+[WARNING]
+====
+*Do not optimize based on intuition.* Measure first. The code path that feels slow is often not the bottleneck. The code paths you cannot see are usually the ones that surprise you.
+====\n\nThe friction here is practical: both versions parse the same data, both produce valid counts, and only one changes the cost profile. If you skip measurement, both implementations look equally correct in code review.
 
 === Read generated behavior before claiming a speedup
 
@@ -56,11 +60,13 @@ Keep the discipline narrow: change one thing, rerun one measurement, record the 
 
 You now have a measured hot path and a reproducible comparison. Use that evidence to choose the concurrency model for the next two chapters.
 
+.Workload characteristics: fixed vs. variable latency
 [source,rust]
 ----
 include::../src/ch08/hot_path.rs[tag=workload_model]
 ----
 
+.Choosing the concurrency model based on evidence
 [source,rust]
 ----
 include::../src/ch08/hot_path.rs[tag=choose_model]

@@ -10,6 +10,7 @@ An ITCH feed is not self-describing. A message arrives as bytes, the first byte 
 
 Start with the one message type you can test end to end: Add Order.
 
+.The AddOrderMessage struct: fixed-width fields from the wire format
 [source,rust]
 ----
 include::../src/ch01/parser.rs[tag=add_order_message]
@@ -19,6 +20,7 @@ This struct is deliberately owned. The stock symbol is an `[u8; 8]`, not a `Stri
 
 Now turn the payload bytes into that struct.
 
+.Extracting fields using known offsets and big-endian decoding
 [source,rust]
 ----
 include::../src/ch01/parser.rs[tag=parse_add_order]
@@ -32,6 +34,7 @@ If you come from C, this may look like ordinary buffer decoding with nicer error
 
 Try to compile this. Read the error before you read the next paragraph.
 
+.Attempting to use a moved value
 [source,rust]
 ----
 include::../src/ch01/move_semantics_broken.rs[tag=move_after_process]
@@ -52,6 +55,11 @@ error[E0382]: borrow of moved value: `msg`
 	|                      ^^^ value borrowed here after move
 ----
 
+[WARNING]
+====
+*Move semantics are not intuitive to most programmers.* This error looks like a restriction, but it is enforcement. You cannot accidentally use a value after an owner transferred it. That is the whole point.
+====
+
 This is the chapter's real subject. Not endianness. Not byte offsets. Ownership. `process` took the message by value, so the parser result changed hands. The compiler is refusing to let you use the old binding because there is no old binding anymore. The move model sounds abstract until a parser value disappears in front of you. Then it stops being abstract.
 
 This is a useful contrast with other languages. In Python, `msg` would usually be another reference to a heap object and the question would be who mutates it later. In Java, object references behave similarly. In C++, the code might copy, move, or bind a reference depending on signatures and value categories that are easy to gloss over in a quick read. Rust forces the transfer to be explicit enough that you can see it in the function call. One owner in, zero owners left behind.
@@ -66,6 +74,7 @@ The parser is simple enough that the error message feels almost overqualified fo
 
 One Add Order payload is enough to learn the layout. It is not enough to process a feed. You still need the outer loop: read the type byte, read the payload length, slice the payload, dispatch on the record type, repeat.
 
+.The frame loop: demarcate boundaries and dispatch on message type
 [source,rust]
 ----
 include::../src/ch01/parser.rs[tag=parse_records]
@@ -81,6 +90,7 @@ That owned `Vec` is not the final architecture. It is the right architecture for
 
 The repository already has a deterministic hex fixture and a smoke test around it. Run the test first.
 
+.Running the Chapter 1 integration test
 [source,shell]
 ----
 cargo test --test integration_ch01

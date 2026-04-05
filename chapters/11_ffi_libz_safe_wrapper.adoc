@@ -1,4 +1,4 @@
-== Decompress the sample data without leaving Rust
+== Chapter 11: Decompress the sample data without leaving Rust
 
 Your chapter 10 exercise gave you async fan-out with measured backpressure, but your input path still assumes someone manually unpacked data before the program started. That manual step breaks repeatability and makes automation brittle. This chapter removes that external dependency by introducing a small, explicit FFI boundary.
 
@@ -24,10 +24,14 @@ error: Undefined Behavior: out-of-bounds pointer arithmetic
 	--> src/ch11/unsafe_bounds_broken.rs:6:5
 ----
 
-`unsafe` lets you perform operations the compiler cannot verify, so your job is to state and enforce the safety contract in code shape.
+[WARNING]
+====
+*Unsafe does not mean "no rules." It means "rules trusted to you."* Document the contract, state preconditions, and test violations. Miri will find many bugs faster than production users.
+====\n\n`unsafe` lets you perform operations the compiler cannot verify, so your job is to state and enforce the safety contract in code shape.
 
 === Wrap the C boundary in a safe function
 
+.A safe Rust wrapper around the C decompression library
 [source,rust]
 ----
 include::../src/ch11/libz_wrapper.rs[tag=safe_decompress]
@@ -37,6 +41,7 @@ The wrapper owns three responsibilities: allocate output, call the foreign funct
 
 === Make the contract executable in tests
 
+.Testing the FFI safety contract: input size, compressed payload, success condition
 [source,rust]
 ----
 include::../src/ch11/libz_wrapper.rs[tag=ffi_contract]

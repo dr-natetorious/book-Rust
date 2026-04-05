@@ -1,14 +1,150 @@
+---
+name: oreilly-style
 extends: default
+
 page:
-  size: Letter
-  margin: [0.85in, 0.8in, 0.9in, 0.8in]
+  size: [6in, 9in]
+  margin: [0.875in, 0.75in, 0.875in, 0.875in]
+
 base:
-  font-family: Noto Serif
-  line-height-length: 13
+  font_family: Source Serif 4
+  font_size: 10.5
+  line_height: 1.5
+  font_color: 1a1a1a
+
+font:
+  catalog:
+    Source Serif 4:
+      normal: SourceSerif4-Regular.ttf
+      bold: SourceSerif4-Bold.ttf
+      italic: SourceSerif4-Italic.ttf
+      bold_italic: SourceSerif4-BoldItalic.ttf
+    Source Sans 3:
+      normal: SourceSans3-Regular.ttf
+      bold: SourceSans3-Bold.ttf
+      italic: SourceSans3-Italic.ttf
+    JetBrains Mono:
+      normal: JetBrainsMono-Regular.ttf
+      bold: JetBrainsMono-Bold.ttf
+      italic: JetBrainsMono-Italic.ttf
+
 heading:
-  font-family: Noto Sans
-  h1-font-size: 22
-  h2-font-size: 16
+  font_family: Source Sans 3
+  font_color: 1a1a1a
+  font_style: bold
+  h1_font_size: 24
+  h2_font_size: 18
+  h3_font_size: 13
+  h4_font_size: 10.5
+  h1_margin_top: 0
+  h1_margin_bottom: 18
+  h2_margin_top: 24
+  h2_margin_bottom: 10
+  h3_margin_top: 18
+  h3_margin_bottom: 6
+
+title_page:
+  font_family: Source Sans 3
+  font_size: 28
+  font_color: 1a1a1a
+  title_top: 30%
+
+header:
+  font_family: Source Sans 3
+  font_size: 8
+  font_color: 666666
+  height: 0.5in
+  border_width: 0.5
+  border_color: cccccc
+  recto_content:
+    right: '{section-title}'
+  verso_content:
+    left: '{chapter-title}'
+
+footer:
+  font_family: Source Sans 3
+  font_size: 9
+  font_color: 666666
+  height: 0.375in
+  recto_content:
+    right: '{page-number}'
+  verso_content:
+    left: '{page-number}'
+
 code:
-  font-family: Noto Sans Mono
-  font-size: 9
+  font_family: JetBrains Mono
+  font_size: 9.5
+  line_height: 1.4
+  background_color: f5f5f0
+  border_color: d0cfc8
+  border_radius: 3
+  border_width: 0.5
+  padding: [8, 10, 8, 10]
+  font_color: 1a1a1a
+
+codespan:
+  font_family: JetBrains Mono
+  font_size: 0.9em
+  background_color: f0efe8
+  font_color: 1a1a1a
+
+admonition:
+  font_family: Source Sans 3
+  column_rule_width: 0
+  padding: [8, 12, 8, 12]
+  label:
+    font_style: bold
+    font_size: 8
+    text_transform: uppercase
+  note:
+    background_color: eef4fb
+    border_color: 5b8db8
+    border_width: [0, 0, 0, 3]
+  tip:
+    background_color: eef6ee
+    border_color: 5b9b5b
+    border_width: [0, 0, 0, 3]
+  warning:
+    background_color: fff8ee
+    border_color: b8892b
+    border_width: [0, 0, 0, 3]
+  important:
+    background_color: fef0f0
+    border_color: b85b5b
+    border_width: [0, 0, 0, 3]
+
+table:
+  font_size: 9.5
+  head:
+    font_family: Source Sans 3
+    font_style: bold
+    font_size: 9
+    background_color: e8e8e2
+    font_color: 1a1a1a
+  body:
+    stripe_background_color: f5f5f0
+  border_width: 0.5
+  border_color: cccccc
+  cell_padding: [4, 8, 4, 8]
+
+caption:
+  font_family: Source Sans 3
+  font_style: italic
+  font_size: 9
+  font_color: 555555
+  text_align: left
+  margin_bottom: 6
+
+quote:
+  font_style: italic
+  font_color: 444444
+  border_color: cccccc
+  border_width: [0, 0, 0, 3]
+  padding: [6, 12, 6, 16]
+
+list:
+  item_spacing: 4
+ulist:
+  marker:
+    disc:
+      font_color: 888888

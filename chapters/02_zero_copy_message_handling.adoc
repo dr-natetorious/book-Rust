@@ -10,6 +10,7 @@ On a busy day the feed is mostly repetition: read a header, branch on the type, 
 
 The owned `AddOrderMessage` from chapter 1 copied the stock symbol into an array. Fine for one record. Wasteful for a stream. The symbol already lives in the input buffer. The fast version should borrow it.
 
+.A zero-copy AddOrder: using borrowed slices instead of owned arrays
 [source,rust]
 ----
 include::../src/ch02/feed.rs[tag=add_order_view]
@@ -23,6 +24,7 @@ This is the point where Rust syntax can look more exotic than it is. `&[u8]` is 
 
 Chapter 1 only needed one record type. The feed handler needs a vocabulary for multiple record shapes. An enum is the simplest one that matches the wire.
 
+.Message enum with lifetime-bound variants for zero-copy parsing
 [source,rust]
 ----
 include::../src/ch02/feed.rs[tag=message_view]
@@ -32,6 +34,7 @@ Every variant carries exactly the fields that variant needs. No tag field plus o
 
 Now parse one message header and one payload without allocating.
 
+.Dispatch on message type while borrowing from the input buffer
 [source,rust]
 ----
 include::../src/ch02/feed.rs[tag=parse_message]
@@ -45,6 +48,7 @@ That is why borrowing is worth learning carefully. It is not an academic rule ab
 
 Try to compile this. Read the error before you read the next paragraph.
 
+.Attempting simultaneous read and write on the same buffer
 [source,rust]
 ----
 include::../src/ch02/aliasing_broken.rs[tag=aliasing_xor_mutability]
@@ -65,6 +69,11 @@ error[E0506]: cannot assign to `buffer[_]` because it is borrowed
 	|                      ----- borrow later used here
 ----
 
+[WARNING]
+====
+*The borrowing rule is not optional safety theater.* If your code compiles, the compiler has checked that aliasing and mutability cannot race. That check is the entire reason the hot path can hand out zero-copy slices without spawning data-race detectors.
+====
+
 This is aliasing XOR mutability in practice. You can have many readers or one writer. Not both at the same time. On a feed handler that means borrowed views are cheap, but they are only safe because the compiler refuses to let you mutate the underlying buffer while those views still exist.
 
 If you already know the C++ rule that simultaneous mutable aliases are a bug farm, this is the same engineering instinct expressed more aggressively. If you come from Python, the equivalent pain is more indirect: shared mutable objects are easy to pass around, and the damage usually shows up later in behavior rather than at the point of mutation. Rust chooses the earlier argument.
@@ -77,6 +86,7 @@ You have now spent enough time staring at borrowed bytes that heap allocation sh
 
 The parser still needs the outer loop. The difference now is that the loop does not build a collection unless the caller asks for one.
 
+.Scanning the feed with a callback: parse once, handle immediately
 [source,rust]
 ----
 include::../src/ch02/feed.rs[tag=scan_messages]
@@ -88,6 +98,7 @@ That closure matters because it changes the architecture from "parse everything,
 
 Run the chapter 2 tests and watch what they are actually proving.
 
+.Running the Chapter 2 integration test
 [source,shell]
 ----
 cargo test --test integration_ch02

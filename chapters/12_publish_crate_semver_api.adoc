@@ -1,4 +1,4 @@
-== Package the platform so another team can depend on it
+== Chapter 12: Package the platform so another team can depend on it
 
 Your chapter 11 exercise moved decompression into your codebase with a tested safety contract. That means another team can now run the same ingestion path you run, but only if your public API prevents easy misuse. This chapter turns internal modules into a crate boundary with compile-time guidance.
 
@@ -15,7 +15,10 @@ If typestate is new to your Rust toolkit, map it to interfaces with compile-time
 
 === Control extension points with sealed traits
 
-Your downstream consumers care about predictable snapshot formats more than domain internals, because integration code and monitoring pipelines depend on stable output contracts from release to release.
+[WARNING]
+====
+*Public APIs are contracts.* Once a function is public and released, removing it or changing its signature is a breaking change. Code your API as if it will outlive your requirements.
+====\n\nYour downstream consumers care about predictable snapshot formats more than domain internals, because integration code and monitoring pipelines depend on stable output contracts from release to release.
 
 [source,rust]
 ----
@@ -26,6 +29,7 @@ Sealing keeps trait implementation rights inside your crate while still exposing
 
 === Make semver decisions explicit in code
 
+.Semantic versioning gate: classify version changes as major or patch
 [source,rust]
 ----
 include::../src/ch12/api.rs[tag=semver_gate]
@@ -33,6 +37,7 @@ include::../src/ch12/api.rs[tag=semver_gate]
 
 Run the confidence tests and inspect both outcomes: major-version bumps classify as breaking, and malformed version strings fail with a typed error.
 
+.Running the Chapter 12 integration test
 [source,shell]
 ----
 cargo test --test integration_ch12

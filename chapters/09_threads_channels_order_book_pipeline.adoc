@@ -1,4 +1,4 @@
-== Process the feed and update the book at the same time
+== Chapter 9: Process the feed and update the book at the same time
 
 Your chapter 8 exercise gave you a measured hot path and a reasoned choice to move forward with threads for bounded handoff. The parser still runs in the same execution lane as book mutation, so one stall blocks both. You now split those responsibilities and make ownership transfer explicit.
 
@@ -20,7 +20,10 @@ error[E0596]: cannot borrow data in an `Arc` as mutable
 	|         ^^^^^^ cannot borrow as mutable
 ----
 
-That compiler stop is the chapter's first win: shared ownership does not imply shared mutable access.
+[WARNING]
+====
+*Channels transfer ownership.* Once you send a value down a channel, only the receiving thread owns it. That is the locking mechanism. If you try to send the same owned value a second time, the compiler will refuse—because it is already owned by the first receiver.
+====\n\nThat compiler stop is the chapter's first win: shared ownership does not imply shared mutable access.
 
 === Build the parser thread and hand off ownership
 
@@ -28,6 +31,7 @@ As message rates rise during volatile windows, parser work and order-book mutati
 
 Start with the parser thread that owns byte parsing and sends typed events through a channel.
 
+.A parser thread: reads frames and sends typed events through a channel
 [source,rust]
 ----
 include::../src/ch09/pipeline.rs[tag=parser_thread]
@@ -37,6 +41,7 @@ include::../src/ch09/pipeline.rs[tag=parser_thread]
 
 Move order-book mutation behind a single receiving worker.
 
+.A book worker thread: receives events and updates shared state
 [source,rust]
 ----
 include::../src/ch09/pipeline.rs[tag=book_thread]
@@ -46,6 +51,7 @@ This design keeps one mutable owner of book state while still using multiple thr
 
 === Run the full threaded pipeline
 
+.Starting the parser and book worker threads
 [source,rust]
 ----
 include::../src/ch09/pipeline.rs[tag=run_threaded_pipeline]
@@ -53,6 +59,7 @@ include::../src/ch09/pipeline.rs[tag=run_threaded_pipeline]
 
 Run both confidence tests to see the two edges of the chapter: events apply in order on the happy path, and unknown-order events surface typed failures from the worker.
 
+.Running the Chapter 9 integration test
 [source,shell]
 ----
 cargo test --test integration_ch09

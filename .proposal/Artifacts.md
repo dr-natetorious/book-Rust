@@ -22,11 +22,13 @@ The highest-frequency artifact. Requires the most discipline.
 
 **Rules:**
 1. Never show a snippet before the reader has a reason to want it
-2. Annotate with comments that carry argument, not description
+2. Prefer numbered callouts for conceptual explanation; keep inline comments minimal
    - Dead weight: `// the compiler catches this`
-   - Pays rent: `// this line transfers ownership — msg is gone after here`
+   - Preferred: callout marker in listing plus explanation below
+   - Exception: concise structure markers and required idioms like `// SAFETY:`
 3. Show broken code deliberately and often. What doesn't compile is frequently more instructive than what does
 4. Compiler error output is part of the snippet — format it as such, annotated where useful
+5. Use source block tags consistently: Rust code as `[source,rust]`, shell commands as `[source,shell]`, compiler and program output as `[source,text]`
 
 > "Try to compile this. Read the error before you read the next paragraph."
 
