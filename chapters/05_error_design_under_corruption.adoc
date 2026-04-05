@@ -1,5 +1,75 @@
-== Chapter 5: Handle Every Failure Without Crashing the Platform
+== Handle every failure without crashing the platform
 
-Callback: chapter 4 left us with a memory-stable stream processor.
+Your iterator pipeline from chapter 4 can run all day without blowing memory. The next problem is uglier: one corrupt record can still stop the whole replay or, worse, mutate state before failing. You need a failure model the caller can act on, not a crash and not a mystery.
 
-This chapter hardens error surfaces and introduces testable error design.
+=== What corrupt feed data looks like in practice
+
+Use the deterministic corruption fixture and trigger the failure path first.
+
+[source,shell]
+----
+cargo test --test integration_ch05 fail_fast_surfaces_the_offset_of_corruption -- --exact
+----
+
+[listing]
+----
+feed error at offset 29: unsupported message type: 90
+^ offset points at the bad frame boundary
+----
+
+That line is the entire chapter in miniature: named failure, precise location, actionable next step.
+
+On real feed days, most records are valid and a small fraction are broken by upstream tooling, truncation, or mixed capture boundaries. The platform decision is not whether corruption exists. It is whether you stop immediately or continue while preserving evidence.
+
+=== Result and the ? operator as design pressure
+
+Start by making the policy explicit.
+
+[source,rust]
+----
+include::../src/ch05/errors.rs[tag=corruption_policy]
+----
+
+Then carry that policy through replay instead of burying choices in helper branches.
+
+[source,rust]
+----
+include::../src/ch05/errors.rs[tag=replay_with_policy]
+----
+
+`Result` plus `?` is not just syntax sugar. It forces a decision boundary at each operation that can fail: parse, convert, apply. In languages where exceptions can bubble from anywhere, this boundary is implicit. In Rust, the boundary is visible in the type and in the function signature.
+
+=== Design errors callers can test directly
+
+If your error surface is one `String`, tests can only compare text. If your error is structured, tests can assert behavior.
+
+[source,rust]
+----
+include::../src/ch05/errors.rs[tag=processing_error]
+----
+
+The success path should also preserve useful summary data for monitoring and retry logic.
+
+[source,rust]
+----
+include::../src/ch05/errors.rs[tag=replay_report]
+----
+
+Run the skip policy test and inspect what is preserved.
+
+[source,shell]
+----
+cargo test --test integration_ch05 skip_bad_records_keeps_valid_records_moving -- --exact
+----
+
+This gives you two independent artifacts: `applied` for throughput and `rejected` for diagnosis. Both are deterministic and easy to assert in tests.
+
+=== Panic versus propagate, and how to test both choices
+
+Library code in this project propagates corruption and book-transition failures. Panics remain for invariants that indicate programmer bugs, not bad input. This mirrors patterns you already know from production services: malformed request returns an error; impossible internal state aborts loudly.
+
+The dry observation for this chapter: once you can name every failure, the scary part is no longer the crash. It is the list of failures that were always there.
+
+=== Exercise
+
+Run replay on `test/fixtures/ch05_corrupt_stream.hex` in both `FailFast` and `SkipBadRecords` modes, and print the applied count plus every rejected record offset and reason.

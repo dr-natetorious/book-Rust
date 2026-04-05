@@ -1,5 +1,62 @@
-== Chapter 6: Add a Pre-Trade Risk Check the Type System Enforces
+== Add a pre-trade risk check the type system enforces
 
-Callback: chapter 5 established explicit and testable failure paths.
+Chapter 5 gave you error paths that stay readable under corruption. That makes a new question unavoidable: where does risk validation sit so bad orders never mutate state? You need a boundary that is configurable, testable, and hard to bypass by accident.
 
-This chapter uses traits and generics to model risk checks with clear tradeoffs.
+=== Risk checks are gatekeepers, not reports
+
+Start with a concrete order and run both chapter 6 tests.
+
+[source,shell]
+----
+cargo test --test integration_ch06
+----
+
+In this chapter, a risk check is the final step before state mutation: position cap, notional cap, or both. The point is not finance sophistication. The point is enforcing preconditions with types so each caller cannot invent its own interpretation.
+
+=== Traits model behavior without inheritance
+
+Define the contract once.
+
+[source,rust]
+----
+include::../src/ch06/risk.rs[tag=risk_check_trait]
+----
+
+If you come from Java or C#, this is the interface pattern with one Rust-specific difference: implementations are resolved at compile time unless you ask for dynamic dispatch. If you come from Go, think interface method set with stronger compile-time constraint checking at call sites.
+
+The first reader action is mechanical: implement one check and make sure `approve` fails with `RiskViolation::PositionLimit` when the attempted position crosses the cap.
+
+=== Generics and monomorphization in the hot path
+
+Use a generic engine when you want one specific check with zero virtual dispatch.
+
+[source,rust]
+----
+include::../src/ch06/risk.rs[tag=generic_risk_engine]
+----
+
+The friction is binary size versus speed. Monomorphization emits a concrete copy per type parameter, which is usually what you want in hot code and occasionally what you regret in large binaries.
+
+The chapter test `generic_engine_accepts_within_limits` is your confidence anchor for the happy path.
+
+=== Dynamic dispatch when flexibility matters more
+
+Use a trait-object engine when check sets vary at runtime.
+
+[source,rust]
+----
+include::../src/ch06/risk.rs[tag=dyn_risk_engine]
+----
+
+Now the primary action is comparison: run `generic_and_dyn_engines_agree_on_rejection` and confirm both engines reject the same order under the same state. Behavior parity matters more than microbenchmarks at this stage.
+
+[source,shell]
+----
+cargo test --test integration_ch06 generic_and_dyn_engines_agree_on_rejection -- --exact
+----
+
+The dry observation for this chapter: the type system will enforce your risk boundary all day, and it will not care how persuasive your exception to policy sounds.
+
+=== Exercise
+
+Implement a third `RiskCheck` for per-symbol share caps, run it through both `GenericRiskEngine` and `DynRiskEngine`, and report which violations fire for the chapter fixture orders.

@@ -1,5 +1,51 @@
-== Chapter 11: Decompress the Sample Data Without Leaving Rust
+== Decompress the sample data without leaving Rust
 
-Callback: chapter 10 gave us asynchronous consumers that benefit from compressed inputs.
+Your chapter 10 exercise gave you async fan-out with measured backpressure, but your input path still assumes someone manually unpacked data before the program started. That manual step breaks repeatability and makes automation brittle. This chapter removes that external dependency by introducing a small, explicit FFI boundary.
 
-This chapter wraps libz through FFI with explicit safety contracts.
+=== Start from the practical problem you already have
+
+You have been handling fixture and sample files as if decompression happens elsewhere. Move that boundary into your code so ingestion can run from one command.
+
+=== Unsafe is a permission set, not a style choice
+
+At this stage, one paragraph of domain context is enough: sample market data is commonly distributed compressed, and preprocessing outside your pipeline adds operational drift between development and production. You are not chasing nanoseconds here; you are removing a fragile manual step that changes what data your tests and runs actually see.
+
+Try to compile this. Read the risk before you read the safe wrapper.
+
+[source,rust]
+----
+include::../src/ch11/unsafe_bounds_broken.rs[tag=unsafe_bounds_broken]
+----
+
+[listing]
+----
+== Miri report (trimmed)
+error: Undefined Behavior: out-of-bounds pointer arithmetic
+	--> src/ch11/unsafe_bounds_broken.rs:6:5
+----
+
+`unsafe` lets you perform operations the compiler cannot verify, so your job is to state and enforce the safety contract in code shape.
+
+=== Wrap the C boundary in a safe function
+
+[source,rust]
+----
+include::../src/ch11/libz_wrapper.rs[tag=safe_decompress]
+----
+
+The wrapper owns three responsibilities: allocate output, call the foreign function, and map status codes to explicit Rust errors.
+
+=== Make the contract executable in tests
+
+[source,rust]
+----
+include::../src/ch11/libz_wrapper.rs[tag=ffi_contract]
+----
+
+This test contract is deterministic: one byte declares payload length, remaining bytes carry data. That gives you a stable harness for success and corruption paths without network or timing variability.
+
+Miri finds undefined behavior faster than production users, and it is dramatically less judgmental about the time of day.
+
+=== Exercise
+
+Run the safe decompression wrapper against `test/fixtures/ch11_mock_compressed.hex`, decode the payload, then intentionally corrupt the declared length and confirm your wrapper returns a typed `LibzError::CorruptInput`.

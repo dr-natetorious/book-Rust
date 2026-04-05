@@ -1,5 +1,88 @@
-== Chapter 7: Share Live Risk State Across the Platform Without Copying It
+== Share live risk state across the platform without copying it
 
-Callback: chapter 6 produced a configurable risk-check abstraction.
+Your risk engine from chapter 6 enforces pre-trade checks, but it still assumes a caller owns the whole state snapshot. That does not hold once feed processing, risk checks, and reporting all need current positions at the same time. Copying state per component is simple and wrong for latency.
 
-This chapter introduces lifetimes and pointer strategies for shared state.
+=== Three components, one state, conflicting access
+
+Start with the read-only view first.
+
+[source,rust]
+----
+include::../src/ch07/shared.rs[tag=borrowed_view]
+----
+
+This is the first-contact lifetime move in this book: `'a` names how long the borrowed symbol and borrowed position are valid. If you know pointers and references from C++ or Rust-free systems, the bridge is direct. Rust is not inventing a new memory model here; it is making the borrowing contract explicit in the type.
+
+Risk, book updates, and reporting all query the same symbols repeatedly while market data is flowing. That is why this chapter exists: you need shared live state with precise ownership and mutation rules.
+
+=== Let the compiler show the wrong design
+
+Try to compile this. Read the error before you read the next paragraph.
+
+[source,rust]
+----
+include::../src/ch07/arc_without_mutex_broken.rs[tag=arc_without_mutex_broken]
+----
+
+[listing]
+----
+error[E0596]: cannot borrow data in an `Arc` as mutable
+  --> src/ch07/arc_without_mutex_broken.rs:10:5
+	|
+10 |     handle.positions.insert(symbol, entry + delta);
+	|     ^^^^^^^^^^^^^^^^ cannot borrow as mutable
+----
+
+`Arc` shares ownership, not mutable access. The failure is useful because it removes an entire class of race-prone design before runtime.
+
+=== Box, Rc, Arc: choose by ownership boundary
+
+[mermaid]
+....
+flowchart TD
+	 A[Need shared state?] -->|No| B[Use Box or plain value ownership]
+	 A -->|Yes| C[Single-threaded access only?]
+	 C -->|Yes| D[Use Rc plus RefCell for interior mutability]
+	 C -->|No| E[Use Arc plus Mutex for cross-thread mutation]
+....
+
+Local, single-threaded sharing uses `Rc<RefCell<T>>`.
+
+[source,rust]
+----
+include::../src/ch07/shared.rs[tag=rc_refcell_state]
+----
+
+[source,rust]
+----
+include::../src/ch07/shared.rs[tag=apply_fill_local]
+----
+
+Cross-thread sharing uses `Arc<Mutex<T>>`.
+
+[source,rust]
+----
+include::../src/ch07/shared.rs[tag=arc_mutex_state]
+----
+
+[source,rust]
+----
+include::../src/ch07/shared.rs[tag=apply_fill_shared]
+----
+
+Run the chapter tests and watch the split: one test validates runtime borrow conflict for `RefCell`; another validates successful shared updates across threads.
+
+[source,shell]
+----
+cargo test --test integration_ch07
+----
+
+=== Interior mutability moves one check to runtime
+
+`RefCell` defers exclusive-borrow enforcement to runtime, which is why `try_borrow_mut` returns a typed error. `Mutex` defers exclusivity to lock acquisition, which is why poisoning is part of the error surface. The model is still explicit; the location of enforcement moved.
+
+The dry observation for this chapter: by the time lifetimes stop feeling hostile, you realize they were documenting your architecture before you did.
+
+=== Exercise
+
+Build a shared live risk state that serves read-only views for reporting while two worker threads apply fills, and print the final per-symbol position map after all workers join.

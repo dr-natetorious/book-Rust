@@ -1,5 +1,73 @@
-== Chapter 8: Find and Fix the Allocation Killing Your Throughput
+== Find and fix the allocation killing your throughput
 
-Callback: chapter 7 left us with shared state and clearer ownership boundaries.
+Your chapter 7 exercise left you with shared risk state that two workers can update without cloning snapshots around the process. That solved ownership and race safety, but it did nothing for throughput. The next pressure point is now visible: one tiny message-handling path still runs for every frame.
 
-This chapter introduces profiling and evidence-based optimization.
+=== Establish a baseline before you optimize anything
+
+Run the baseline profiler first and write down the numbers before you touch the code.
+
+[source,rust]
+----
+include::../src/ch08/hot_path.rs[tag=baseline_profile]
+----
+
+Run it against a deterministic fixture stream and capture three values: parsed messages, add-message count, and modeled allocations.
+
+[source,shell]
+----
+cargo test --test integration_ch08 hot_path_smoke::optimized_profile_reduces_modeled_allocations
+----
+
+=== Find the hot path with evidence, not instinct
+
+In this feed, add-order traffic dominates busy windows and every avoidable allocation on that path compounds into latency under load. That is the only domain context you need for this chapter: cancel and execute logic matter, but the add-order parse path is where the allocation tax gets paid most often.
+
+Run the optimized profile and compare only one metric first: modeled allocations.
+
+[source,rust]
+----
+include::../src/ch08/hot_path.rs[tag=optimized_profile]
+----
+
+The friction here is practical: both versions parse the same data, both produce valid counts, and only one changes the cost profile. If you skip measurement, both implementations look equally correct in code review.
+
+=== Read generated behavior before claiming a speedup
+
+Use `cargo asm` to inspect the function you changed, then compare instruction shape between baseline and optimized variants.
+
+[listing]
+----
+$ cargo asm book_rust::ch08::hot_path::optimized_profile
+...
+callq core::slice::iter::next
+callq alloc::vec::Vec<u8>::extend_from_slice
+...
+----
+
+The important move is not memorizing assembly syntax. You are checking that the change removed repeat allocation work from the steady-state loop.
+
+The function you wrote quickly in an earlier chapter now decides whether your pipeline gets headroom or stalls quietly under traffic spikes. It waited until you had enough data to blame it.
+
+=== One change, one measurement
+
+Keep the discipline narrow: change one thing, rerun one measurement, record the delta. If two metrics moved, rerun with one more controlled edit.
+
+=== Threads versus async is a workload decision
+
+You now have a measured hot path and a reproducible comparison. Use that evidence to choose the concurrency model for the next two chapters.
+
+[source,rust]
+----
+include::../src/ch08/hot_path.rs[tag=workload_model]
+----
+
+[source,rust]
+----
+include::../src/ch08/hot_path.rs[tag=choose_model]
+----
+
+This keeps the transition honest: threads fit tightly bounded CPU handoff, async fits fan-out with variable consumer latency.
+
+=== Exercise
+
+Run the profile on your fixture stream, replace the per-message allocation path with the scratch-buffer path, and record the before/after allocation count plus your chosen model (`Threads` or `Async`) for the next stage.

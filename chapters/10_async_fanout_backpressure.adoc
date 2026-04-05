@@ -1,5 +1,62 @@
-== Chapter 10: Handle a Live Feed Without Blocking on Slow Consumers
+== Handle a live feed without blocking on slow consumers
 
-Callback: chapter 9 established thread-safe ownership transfer.
+Your chapter 9 exercise gave you a parser thread and a book thread that pass ownership safely through a channel. That architecture is clean until one downstream consumer slows down and starts dictating the pace for everyone else. This chapter turns one handoff into async fan-out with explicit backpressure accounting.
 
-This chapter introduces async fan-out and backpressure handling.
+=== Futures are suspended work, not background threads
+
+Start by building bounded channels for each consumer lane.
+
+[source,rust]
+----
+include::../src/ch10/async_fanout.rs[tag=fanout_channels]
+----
+
+If futures are new to your Rust mental model, map them to explicit state machines you can pause and resume. The runtime polls readiness; it does not create one thread per future.
+
+=== Tokio is infrastructure you configure, not magic you trust blindly
+
+Run the async fan-out function with one intentionally slow consumer and a small buffer.
+
+[source,rust]
+----
+include::../src/ch10/async_fanout.rs[tag=run_async_fanout]
+----
+
+Feed plants care less about average consumer speed than about tail latency in one subscriber lane, because a slow risk or logging consumer can still force pressure on the producer queue.
+
+=== Observe backpressure instead of guessing at it
+
+Run the confidence tests and check that `backpressure_events` is non-zero when the slow consumer delay is enabled.
+
+[source,shell]
+----
+cargo test --test integration_ch10
+----
+
+The hard idea here is operational: a bounded queue is not only a memory control, it is a measurement surface. Once you can count pressure events, you can decide whether to drop, shed, or slow ingestion deliberately.
+
+Everything is concurrent and mostly calm until one subscriber blinks. Then the queue remembers exactly who blinked first.
+
+=== Mutex across await: see the bug shape early
+
+Try to compile this. Read the error before you read the next paragraph.
+
+[source,rust]
+----
+include::../src/ch10/mutex_across_await_broken.rs[tag=mutex_across_await_broken]
+----
+
+[listing]
+----
+error: future cannot be sent between threads safely
+  --> src/ch10/mutex_across_await_broken.rs:11:5
+	|
+11 |     tokio::spawn(async move {
+	|     ^^^^^^^^^^^^ future created by async block is not `Send`
+----
+
+The rule is direct: do not hold synchronous mutex guards across `.await` points in spawned tasks.
+
+=== Exercise
+
+Run the async fan-out with three consumers and a bounded channel size of `2`, then print `backpressure_events` for a fast run and a slow-consumer run so you can compare pressure behavior directly.

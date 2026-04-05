@@ -1,5 +1,45 @@
-== Chapter 12: Package the Platform So Another Team Can Depend on It
+== Package the platform so another team can depend on it
 
-Callback: chapter 11 produced a safe boundary around external native code.
+Your chapter 11 exercise moved decompression into your codebase with a tested safety contract. That means another team can now run the same ingestion path you run, but only if your public API prevents easy misuse. This chapter turns internal modules into a crate boundary with compile-time guidance.
 
-This chapter stabilizes API contracts and release discipline for crate consumers.
+=== Design for the second version, not the first demo
+
+Start with a builder that cannot construct an invalid client.
+
+[source,rust]
+----
+include::../src/ch12/api.rs[tag=typestate_builder]
+----
+
+If typestate is new to your Rust toolkit, map it to interfaces with compile-time state transitions: each method consumes one state and returns the next valid state.
+
+=== Control extension points with sealed traits
+
+Your downstream consumers care about predictable snapshot formats more than domain internals, because integration code and monitoring pipelines depend on stable output contracts from release to release.
+
+[source,rust]
+----
+include::../src/ch12/api.rs[tag=sealed_trait]
+----
+
+Sealing keeps trait implementation rights inside your crate while still exposing behavior to callers.
+
+=== Make semver decisions explicit in code
+
+[source,rust]
+----
+include::../src/ch12/api.rs[tag=semver_gate]
+----
+
+Run the confidence tests and inspect both outcomes: major-version bumps classify as breaking, and malformed version strings fail with a typed error.
+
+[source,shell]
+----
+cargo test --test integration_ch12
+----
+
+The highest-latency production bug is often a dependency upgrade that looked safe in release notes and was not.
+
+=== Exercise
+
+Publish the crate API locally by generating a snapshot with `FeedClientBuilder` and `JsonFormat`, then change the public version from `1.x.y` to `2.0.0` and verify your semver gate classifies that change as breaking.

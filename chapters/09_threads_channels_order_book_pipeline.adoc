@@ -1,5 +1,63 @@
-== Chapter 9: Process the Feed and Update the Book at the Same Time
+== Process the feed and update the book at the same time
 
-Callback: chapter 8 measured where time is actually spent.
+Your chapter 8 exercise gave you a measured hot path and a reasoned choice to move forward with threads for bounded handoff. The parser still runs in the same execution lane as book mutation, so one stall blocks both. You now split those responsibilities and make ownership transfer explicit.
 
-This chapter moves parsing and book updates into a threaded pipeline.
+=== Send and Sync show where data races are impossible
+
+Try to compile this. Read the error before you read the next paragraph.
+
+[source,rust]
+----
+include::../src/ch09/race_broken.rs[tag=race_broken]
+----
+
+[listing]
+----
+error[E0596]: cannot borrow data in an `Arc` as mutable
+  --> src/ch09/race_broken.rs:14:9
+	|
+14 |         handle.insert(42, 1);
+	|         ^^^^^^ cannot borrow as mutable
+----
+
+That compiler stop is the chapter's first win: shared ownership does not imply shared mutable access.
+
+=== Build the parser thread and hand off ownership
+
+As message rates rise during volatile windows, parser work and order-book mutation compete for the same core budget; separating them lets parsing continue while book logic catches up. You still process deterministic historical bytes, but now the pressure is pipeline coordination, not just parsing correctness.
+
+Start with the parser thread that owns byte parsing and sends typed events through a channel.
+
+[source,rust]
+----
+include::../src/ch09/pipeline.rs[tag=parser_thread]
+----
+
+=== Let the book worker own state transitions
+
+Move order-book mutation behind a single receiving worker.
+
+[source,rust]
+----
+include::../src/ch09/pipeline.rs[tag=book_thread]
+----
+
+This design keeps one mutable owner of book state while still using multiple threads for throughput.
+
+=== Run the full threaded pipeline
+
+[source,rust]
+----
+include::../src/ch09/pipeline.rs[tag=run_threaded_pipeline]
+----
+
+Run both confidence tests to see the two edges of the chapter: events apply in order on the happy path, and unknown-order events surface typed failures from the worker.
+
+[source,shell]
+----
+cargo test --test integration_ch09
+----
+
+=== Exercise
+
+Run the threaded pipeline against your fixture stream with at least one add and one execute message, then inject one invalid event and confirm the returned `PipelineError` includes the frame offset that failed.

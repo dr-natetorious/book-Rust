@@ -8,6 +8,7 @@ name = "book_rust"
 path = "src/lib.rs"
 
 [dependencies]
+tokio = { version = "1.48.0", features = ["macros", "rt", "sync", "time"] }
 
 [[test]]
 name = "integration_ch01"
@@ -20,3 +21,39 @@ path = "test/integration_ch02.rs"
 [[test]]
 name = "integration_ch03"
 path = "test/integration_ch03.rs"
+
+[[test]]
+name = "integration_ch04"
+path = "test/integration_ch04.rs"
+
+[[test]]
+name = "integration_ch05"
+path = "test/integration_ch05.rs"
+
+[[test]]
+name = "integration_ch06"
+path = "test/integration_ch06.rs"
+
+[[test]]
+name = "integration_ch07"
+path = "test/integration_ch07.rs"
+
+[[test]]
+name = "integration_ch08"
+path = "test/integration_ch08.rs"
+
+[[test]]
+name = "integration_ch09"
+path = "test/integration_ch09.rs"
+
+[[test]]
+name = "integration_ch10"
+path = "test/integration_ch10.rs"
+
+[[test]]
+name = "integration_ch11"
+path = "test/integration_ch11.rs"
+
+[[test]]
+name = "integration_ch12"
+path = "test/integration_ch12.rs"

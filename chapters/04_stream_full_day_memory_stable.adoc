@@ -1,5 +1,88 @@
-== Chapter 4: Stream a Full Trading Day Without Running Out of Memory
+== Stream a full trading day without running out of memory
 
-Callback: chapter 3 gave us a state model we can now drive from a long stream.
+You ended chapter 3 with an order book that survives the full fixture without panicking. That same code falls apart when input size stops being friendly. The next failure is not correctness. It is memory pressure from trying to stage more bytes than you need.
 
-This chapter introduces iterator-based flow and memory-stable processing.
+=== Why a 5GB file does not require 5GB of RAM
+
+Start from the mistake on purpose: load everything, then parse. It works on tiny fixtures and quietly trains the wrong instinct. Run chapter 4 tests first so you have a baseline before changing flow.
+
+[source,shell]
+----
+cargo test --test integration_ch04
+----
+
+The parser from chapter 2 already consumes one record at a time. The missing part is a frame iterator that yields borrowed slices and advances an offset.
+
+[source,rust]
+----
+include::../src/ch04/stream.rs[tag=frame_iter]
+----
+
+This is the same tradeoff you have seen in other languages when you switch from materialized collections to streaming cursors. Rust's version is explicit because the borrow ties each payload to the source buffer, so you do not accidentally keep old frames alive forever.
+
+Orders get added, cancelled, and replaced all day. On active sessions, cancels dominate. You care because the cancel path can be hot for hours, and a tiny allocation in that path becomes a large bill by market close.
+
+=== Iterators are lazy, and that is the point
+
+Now implement `Iterator` so `next()` performs exactly one frame decode and returns immediately.
+
+[source,rust]
+----
+include::../src/ch04/stream.rs[tag=iterator_impl]
+----
+
+Run one concrete action: call `next()` twice and inspect offsets. The first item starts at `0`, the second at `29` for the fixture used in tests. If those offsets drift, your memory profile might still look flat while your parser is silently skipping bytes.
+
+The friction here is familiar: eager code usually looks simpler at first. Lazy code feels noisier because state moves into the iterator struct. The payoff is that you never hold more payload than the current frame.
+
+=== Implement Iterator on your own types
+
+You also need a typed stream that yields parsed messages directly, not raw frame slices.
+
+[source,rust]
+----
+include::../src/ch04/stream.rs[tag=parsed_message_iter_impl]
+----
+
+This pattern matters because it scales: one iterator reads frame boundaries, the next layer turns frames into domain messages, and downstream code only sees meaningful items. You can map this directly to a familiar pipeline idea from Go channels or Java streams, but here each adapter compiles to simple loops with no hidden scheduler.
+
+For file-backed inputs, move from borrowed slices to owned frame payloads and keep the same iterator shape.
+
+[source,rust]
+----
+include::../src/ch04/stream.rs[tag=file_frame_iter]
+----
+
+Run the failure-path test and inspect the error branch.
+
+[source,shell]
+----
+cargo test --test integration_ch04 file_frame_iter_reports_truncated_header -- --exact
+----
+
+[listing]
+----
+running 1 test
+test iterator_smoke::file_frame_iter_reports_truncated_header ... ok
+
+test result: ok. 1 passed; 0 failed
+----
+
+That test only passes if truncated header detection returns a named error instead of guessing and continuing.
+
+=== Verify zero-overhead intent with cargo-asm
+
+If `cargo-asm` is available in your environment, inspect the assembly for `FrameIter::next` before and after any refactor.
+
+[source,shell]
+----
+cargo asm book_rust::ch04::stream::FrameIter::next
+----
+
+If `cargo-asm` is not available, use `cargo test --test integration_ch04` as your immediate confidence signal and defer assembly inspection until chapter 8.
+
+The dry observation for this chapter is simple: the bytes do not care how elegant your iterator chain looks. They only care whether you stopped allocating.
+
+=== Exercise
+
+Run the parser against the chapter 3 order-flow fixture through `FileFrameIter` and verify that processing stays frame-by-frame with flat memory use while producing all records.

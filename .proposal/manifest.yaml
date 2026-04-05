@@ -56,62 +56,104 @@ chapters:
     file: chapters/04_stream_full_day_memory_stable.adoc
     slug: stream-full-day-memory-stable
     title: Stream a full trading day without running out of memory
-    source_paths: []
-    test_paths: []
-    status: planned
+    source_paths:
+      - src/ch04/mod.rs
+      - src/ch04/stream.rs
+    test_paths:
+      - test/ch04/iterator_smoke.rs
+      - test/integration_ch04.rs
+    status: written
   - id: 5
     file: chapters/05_error_design_under_corruption.adoc
     slug: error-design-under-corruption
     title: Handle every failure without crashing the platform
-    source_paths: []
-    test_paths: []
-    status: planned
+    source_paths:
+      - src/ch05/mod.rs
+      - src/ch05/errors.rs
+    test_paths:
+      - test/ch05/error_smoke.rs
+      - test/integration_ch05.rs
+      - test/fixtures/ch05_corrupt_stream.hex
+    status: written
   - id: 6
     file: chapters/06_traits_generics_for_risk.adoc
     slug: traits-generics-for-risk
     title: Add a pre-trade risk check the type system enforces
-    source_paths: []
-    test_paths: []
-    status: planned
+    source_paths:
+      - src/ch06/mod.rs
+      - src/ch06/risk.rs
+    test_paths:
+      - test/ch06/risk_smoke.rs
+      - test/integration_ch06.rs
+    status: written
   - id: 7
     file: chapters/07_shared_state_lifetimes_pointers.adoc
     slug: shared-state-lifetimes-pointers
     title: Share live risk state across the platform without copying it
-    source_paths: []
-    test_paths: []
-    status: planned
+    source_paths:
+      - src/ch07/mod.rs
+      - src/ch07/shared.rs
+      - src/ch07/arc_without_mutex_broken.rs
+    test_paths:
+      - test/ch07/shared_state_smoke.rs
+      - test/integration_ch07.rs
+    status: written
   - id: 8
     file: chapters/08_profile_and_optimize_hot_path.adoc
     slug: profile-and-optimize-hot-path
     title: Find and fix the allocation killing your throughput
-    source_paths: []
-    test_paths: []
-    status: planned
+    source_paths:
+      - src/ch08/mod.rs
+      - src/ch08/hot_path.rs
+    test_paths:
+      - test/ch08/hot_path_smoke.rs
+      - test/integration_ch08.rs
+    status: written
   - id: 9
     file: chapters/09_threads_channels_order_book_pipeline.adoc
     slug: threads-channels-order-book-pipeline
     title: Process the feed and update the book at the same time
-    source_paths: []
-    test_paths: []
-    status: planned
+    source_paths:
+      - src/ch09/mod.rs
+      - src/ch09/pipeline.rs
+      - src/ch09/race_broken.rs
+    test_paths:
+      - test/ch09/pipeline_smoke.rs
+      - test/integration_ch09.rs
+    status: written
   - id: 10
     file: chapters/10_async_fanout_backpressure.adoc
     slug: async-fanout-backpressure
     title: Handle a live feed without blocking on slow consumers
-    source_paths: []
-    test_paths: []
-    status: planned
+    source_paths:
+      - src/ch10/mod.rs
+      - src/ch10/async_fanout.rs
+      - src/ch10/mutex_across_await_broken.rs
+    test_paths:
+      - test/ch10/async_fanout_smoke.rs
+      - test/integration_ch10.rs
+    status: written
   - id: 11
     file: chapters/11_ffi_libz_safe_wrapper.adoc
     slug: ffi-libz-safe-wrapper
     title: Decompress the sample data without leaving Rust
-    source_paths: []
-    test_paths: []
-    status: planned
+    source_paths:
+      - src/ch11/mod.rs
+      - src/ch11/libz_wrapper.rs
+      - src/ch11/unsafe_bounds_broken.rs
+    test_paths:
+      - test/ch11/libz_wrapper_smoke.rs
+      - test/integration_ch11.rs
+      - test/fixtures/ch11_mock_compressed.hex
+    status: written
   - id: 12
     file: chapters/12_publish_crate_semver_api.adoc
     slug: publish-crate-semver-api
     title: Package the platform so another team can depend on it
-    source_paths: []
-    test_paths: []
-    status: planned
+    source_paths:
+      - src/ch12/mod.rs
+      - src/ch12/api.rs
+    test_paths:
+      - test/ch12/api_smoke.rs
+      - test/integration_ch12.rs
+    status: written
