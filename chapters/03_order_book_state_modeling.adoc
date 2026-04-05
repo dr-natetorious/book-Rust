@@ -1,0 +1,5 @@
+== Chapter 3: Build an Order Book That Cannot Hold a Contradictory State
+
+Callback: chapter 2 established zero-copy parsing for inbound records.
+
+This chapter models order-book state transitions with enums and exhaustive matching.

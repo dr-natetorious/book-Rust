@@ -1,0 +1,5 @@
+== Chapter 5: Handle Every Failure Without Crashing the Platform
+
+Callback: chapter 4 left us with a memory-stable stream processor.
+
+This chapter hardens error surfaces and introduces testable error design.

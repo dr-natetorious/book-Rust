@@ -1,0 +1,22 @@
+== Chapter 1: Parse a Binary Market Feed from Raw Bytes
+
+Chapter 0 ended with a compiled project and a runnable test command. Here we use that baseline to parse binary messages with ownership-safe code.
+
+Market feeds are compact binary streams where every byte has a purpose. We will parse one message type first and make the data model explicit.
+
+[source,rust]
+----
+include::../src/ch01/parser.rs[tag=add_order_message]
+----
+
+[source,rust]
+----
+include::../src/ch01/parser.rs[tag=parse_add_order]
+----
+
+[source,rust]
+----
+include::../src/ch01/parser.rs[tag=parse_records]
+----
+
+Exercise: run the parser against the fixture stream and print every Add Order record.

@@ -1,0 +1,14 @@
+extends: default
+page:
+  size: Letter
+  margin: [0.85in, 0.8in, 0.9in, 0.8in]
+base:
+  font-family: Noto Serif
+  line-height-length: 13
+heading:
+  font-family: Noto Sans
+  h1-font-size: 22
+  h2-font-size: 16
+code:
+  font-family: Noto Sans Mono
+  font-size: 9

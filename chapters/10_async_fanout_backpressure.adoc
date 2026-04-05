@@ -1,0 +1,5 @@
+== Chapter 10: Handle a Live Feed Without Blocking on Slow Consumers
+
+Callback: chapter 9 established thread-safe ownership transfer.
+
+This chapter introduces async fan-out and backpressure handling.

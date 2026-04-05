@@ -1,0 +1,5 @@
+== Chapter 12: Package the Platform So Another Team Can Depend on It
+
+Callback: chapter 11 produced a safe boundary around external native code.
+
+This chapter stabilizes API contracts and release discipline for crate consumers.

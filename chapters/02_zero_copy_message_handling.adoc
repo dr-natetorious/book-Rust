@@ -1,0 +1,5 @@
+== Chapter 2: Handle All Message Types Without Allocating on the Hot Path
+
+Callback: in chapter 1 you parsed one deterministic message type and validated it with tests.
+
+This chapter extends the parser with borrowing and zero-copy slices across multiple message variants.

@@ -1,0 +1,5 @@
+== Chapter 6: Add a Pre-Trade Risk Check the Type System Enforces
+
+Callback: chapter 5 established explicit and testable failure paths.
+
+This chapter uses traits and generics to model risk checks with clear tradeoffs.

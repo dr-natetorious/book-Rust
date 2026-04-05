@@ -1,0 +1,5 @@
+== Chapter 7: Share Live Risk State Across the Platform Without Copying It
+
+Callback: chapter 6 produced a configurable risk-check abstraction.
+
+This chapter introduces lifetimes and pointer strategies for shared state.

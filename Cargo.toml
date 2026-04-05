@@ -1,0 +1,14 @@
+[package]
+name = "book_rust"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "book_rust"
+path = "src/lib.rs"
+
+[dependencies]
+
+[[test]]
+name = "integration_ch01"
+path = "test/integration_ch01.rs"

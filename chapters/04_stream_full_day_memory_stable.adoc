@@ -1,0 +1,5 @@
+== Chapter 4: Stream a Full Trading Day Without Running Out of Memory
+
+Callback: chapter 3 gave us a state model we can now drive from a long stream.
+
+This chapter introduces iterator-based flow and memory-stable processing.

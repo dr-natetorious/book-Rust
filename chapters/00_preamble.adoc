@@ -1,0 +1,196 @@
+== Preamble: Before You Write a Line of Rust
+
+=== The problem Rust was built to solve
+
+You've shipped concurrent systems in C++. You've debugged race conditions in Go at 2am. You've watched a Python service fall over under load and spent two days proving it was a GIL contention issue, not a business logic bug. You already know what the hard problems are. They're the same hard problems they've always been: shared mutable state, ownership of heap-allocated memory, undefined behavior at the boundary between your code and someone else's.
+
+Rust doesn't fix those problems by introducing a runtime. It doesn't fix them by adding a garbage collector. It fixes them by making the common unsafe patterns unrepresentable at compile time. The borrow checker is not a restriction — it's a proof. When the program compiles, certain categories of bugs provably cannot exist. Not "unlikely." Not "caught by the test suite." Cannot exist.
+
+That's the thing the language was built to solve. Every concept in this book is downstream of that.
+
+=== Who this book is for
+
+This book is for engineers who already know how to program — and need to learn Rust's particular model rather than a new way to think about computing.
+
+It assumes you understand what a heap allocation costs. It assumes you've debugged a data race in production or, if you've been lucky enough not to, you understand in your bones why they're catastrophic. It assumes familiarity with basic Rust syntax at the level of the first four chapters of _The Rust Programming Language_ — if you haven't read those, do that first. This book won't re-explain what a closure is.
+
+What it will do is put you in situations where Rust's ownership model is the only clean solution. You'll feel the friction of the wrong approach before you understand the right one. That ordering is intentional. The compiler errors you'll hit in chapter 1 are the syllabus.
+
+If you're a beginner looking for a gentle introduction: this isn't the book. If you're a senior engineer who already knows C++, Go, or Python at production depth and wants to add Rust to that toolkit in a context that respects your experience: this is the book.
+
+=== The platform you're going to build
+
+Twelve chapters. One project. Every line of code you write in chapter 2 is still running in chapter 12.
+
+The project is a market data platform: a system that reads a binary feed of financial messages, maintains a live order book, applies pre-trade risk checks, and publishes snapshots to downstream consumers. By the end, it's concurrent, async, tested, and packaged as a crate.
+
+[literal]
+....
+ Raw ITCH feed
+      │
+      ▼
+ ┌────────────┐        ┌────────────┐
+ │ Feed       │──msg──▶│ Order Book │──snapshot──▶ consumers
+ │ Handler    │        │ (ch 3–4)   │
+ │ (ch 1–2)   │        └────────────┘
+ └────────────┘               │
+      │                  risk check
+      │                  (ch 5–7)
+      │
+ ┌────────────┐
+ │ Concurrent │  ch 8–10: threads, async, backpressure
+ │ Pipeline   │
+ └────────────┘
+      │
+ ┌────────────────────────┐
+ │ Published Crate        │  ch 11–12: FFI, semver, API design
+ │ + PyO3 bridge          │
+ └────────────────────────┘
+....
+
+The finance domain is deliberately shallow. You don't need to know what a dark pool is. You need to know that this system processes a lot of data very fast, cannot produce incorrect state, and cannot afford regressions. That's enough for every concept in the book to feel necessary rather than academic.
+
+The data is real. Nasdaq publishes free ITCH 5.0 binary sample files at `emi.nasdaq.com/ITCH/Nasdaq%20ITCH/`. No account required. You'll download one before this preamble is finished.
+
+=== Toolchain setup
+
+Install `rustup` — the Rust toolchain installer — from `rustup.rs`. On macOS or Linux:
+
+[source,shell]
+----
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+----
+
+On Windows, download and run the `rustup-init.exe` from the same address.
+
+Once complete, the stable toolchain is available as `cargo`, `rustc`, and `rustup`. Confirm the installation:
+
+[source,shell]
+----
+rustc --version
+cargo --version
+----
+
+Install the three tools you'll use throughout the book:
+
+[source,shell]
+----
+rustup component add clippy rustfmt
+----
+
+`clippy` is a linter that catches common Rust anti-patterns — mistakes the compiler permits but that signal misuse. `rustfmt` is an opinionated code formatter. Both are invoked through Cargo:
+
+[source,shell]
+----
+cargo clippy
+cargo fmt
+----
+
+For editor support, install `rust-analyzer`. It's available as a VS Code extension, a Neovim plugin, and a standalone LSP server for any editor that speaks LSP. It provides real-time type information, inline error display, and the single most useful thing: showing you the inferred type of any expression you hover over. When you're learning, that feedback loop is faster than the compiler.
+
+You don't need to configure any of these. The defaults work. Move on.
+
+=== How to read a compiler error
+
+Rust compiler errors are famously good. Famous for a compiler — adjust expectations accordingly, but not too far down. They are genuinely better than what you may be used to.
+
+Here's a representative one. Don't try to understand the Rust concept yet — just practice reading the error structure:
+
+[source,text]
+----
+error[E0382]: borrow of moved value: `msg`
+  --> src/ch01/parser.rs:47:20
+   |
+44 |     let msg = parse_add_order(&bytes)?;
+   |         --- value moved here (inferred)
+45 |     process(msg);
+   |             --- value moved here
+46 |
+47 |     println!("{:?}", msg);  // <-- msg is gone
+   |                      ^^^ value borrowed here after move
+   |
+   = note: move occurs because `msg` has type `AddOrderMessage`,
+           which does not implement the `Copy` trait
+----
+
+Read it in this order:
+
+. **The error code** — `E0382`. You can look up any error code with `rustc --explain E0382`. Do this whenever an error is unfamiliar.
+. **The location** — file, line, column. Open it.
+. **The annotated span** — the compiler marks every relevant line, not just the one that failed. Read the labels on each.
+. **The note** — the final sentence usually tells you _why_ the rule exists, not just that it was violated.
+
+The span annotations are where the information is. The message at the top is a summary. Read the annotations first.
+
+You'll spend real time on compiler errors in the first three chapters. That time is the investment. By chapter 5 the errors read as fast as print statements — they're telling you something precise that you've already internalized. The chapter still takes the same clock time to resolve. It just stops feeling like a fight.
+
+The compiler's error messages are good enough that some engineers read them before looking at their own code. It's an unusual amount of information to get from a failing build. Try not to take it for granted.
+
+=== Your first Cargo project
+
+The repository for this book is already a Cargo workspace. Clone it, change into the directory, and run the test suite:
+
+[source,shell]
+----
+git clone https://github.com/your-org/book-rust.git
+cd book-rust
+cargo test
+----
+
+You should see output ending with:
+
+[source,text]
+----
+Running test\integration_ch01.rs
+
+running 3 tests
+test parser_smoke::rejects_truncated_payload ... ok
+test parser_smoke::rejects_unknown_message_type ... ok
+test parser_smoke::parses_single_add_order_from_fixture ... ok
+
+test result: ok. 3 passed; 0 failed
+----
+
+Three parser tests passing against a deterministic hex fixture. You didn't write the parser yet — chapter 1 will walk through it line by line. But you've confirmed the toolchain works, the crate compiles, and the test harness runs. That's the baseline. Everything from here builds on it.
+
+If `cargo test` fails: check that you're on Rust stable 1.75 or later (`rustc --version`), and that you have no local uncommitted changes.
+
+=== Downloading the sample data
+
+Every exercise in this book runs against real Nasdaq ITCH 5.0 binary data. Nasdaq publishes historical sample files at:
+
+[source,text]
+----
+emi.nasdaq.com/ITCH/Nasdaq%20ITCH/
+----
+
+Download the January 30, 2020 file. That's the day the WHO declared COVID-19 a Public Health Emergency of International Concern. The feed was under elevated volatility, high message volume, and unusual cancel-to-execute ratios. It's the most interesting data in the archive for our purposes. The file is approximately 5.2 GB compressed.
+
+If you're on a slower connection, the December 30, 2019 file is 3.3 GB and works for every exercise.
+
+[source,shell]
+----
+# macOS / Linux
+wget -P data/ "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/01302020.NASDAQ_ITCH50.gz"
+
+# or with curl
+curl -L -o data/01302020.NASDAQ_ITCH50.gz \
+  "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/01302020.NASDAQ_ITCH50.gz"
+----
+
+Do not decompress it yet. Chapter 11 will handle that in Rust. For now, the file goes in `data/` at the root of the repository. The tests in chapters 1 through 10 run against deterministic fixtures and don't require this file. When an exercise says "the sample file," it means this one.
+
+[NOTE]
+====
+The `data/` directory is listed in `.gitignore`. The binary file does not belong in the repository.
+====
+
+=== Exercise
+
+Before moving to chapter 1, confirm three things:
+
+. `cargo test` passes with no failures.
+. `rustc --version` reports 1.75 or later.
+. The sample data file is present at `data/01302020.NASDAQ_ITCH50.gz` (or your chosen alternative).
+
+That's the baseline. Chapter 1 starts from exactly this state.

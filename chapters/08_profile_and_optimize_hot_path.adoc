@@ -1,0 +1,5 @@
+== Chapter 8: Find and Fix the Allocation Killing Your Throughput
+
+Callback: chapter 7 left us with shared state and clearer ownership boundaries.
+
+This chapter introduces profiling and evidence-based optimization.

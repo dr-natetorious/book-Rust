@@ -1,0 +1,5 @@
+== Chapter 11: Decompress the Sample Data Without Leaving Rust
+
+Callback: chapter 10 gave us asynchronous consumers that benefit from compressed inputs.
+
+This chapter wraps libz through FFI with explicit safety contracts.

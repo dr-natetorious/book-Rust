@@ -1,0 +1,5 @@
+== Chapter 9: Process the Feed and Update the Book at the Same Time
+
+Callback: chapter 8 measured where time is actually spent.
+
+This chapter moves parsing and book updates into a threaded pipeline.
