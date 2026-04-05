@@ -1,4 +1,3 @@
-[#ch05-errors]
 == Chapter 5: Handle every failure without crashing the platform
 
 Your chapter 4 iterator pipeline runs frame-by-frame without allocating. That solved memory pressure, but it exposed a new problem: one corrupt record in the middle of a 5GB file can still stop the whole replay or, worse, mutate state before failing.
@@ -18,14 +17,11 @@ cargo test --test integration_ch05 fail_fast_surfaces_the_offset_of_corruption -
 
 The output shows:
 
-.Fail-fast diagnostic output with actionable location
-[source,text]
+[listing]
 ----
-feed error at offset 29: unsupported message type: 90 <1>
-policy: FailFast stopped replay after first invalid frame <2>
+feed error at offset 29: unsupported message type: 90
+^ offset points exactly at the bad frame boundary
 ----
-<1> The byte offset identifies the exact frame boundary that failed.
-<2> The policy line confirms failure behavior is architectural, not incidental.
 
 That line is the entire chapter in miniature: named failure, precise location, actionable next step. The infrastructure receives that error, logs it with context, and decides what to do. The order book did not panic. The corrupt record was not processed. State was not mutated.
 
@@ -93,15 +89,6 @@ cargo test --test integration_ch05 fail_fast_stops_on_first_bad_record -- --exac
 cargo test --test integration_ch05 skip_bad_records_keeps_valid_records_moving -- --exact
 ----
 
-.Representative policy comparison output
-[source,text]
-----
-test error_smoke::fail_fast_stops_on_first_bad_record ... ok <1>
-test error_smoke::skip_bad_records_keeps_valid_records_moving ... ok <2>
-----
-<1> FailFast preserves strict correctness by halting on first corruption.
-<2> SkipBadRecords preserves throughput while still surfacing diagnostics.
-
 The `fail_fast` test confirms that corruption stops the replay immediately and returns a typed error. The `skip_records` test confirms that valid orders are still processed while corruption is logged. Run both and observe the difference in applied count and error breakdown.
 
 === Library code propagates, test code panics
@@ -117,4 +104,3 @@ The dry observation for this chapter: once you can name every failure, the scary
 Run replay on `test/fixtures/ch05_corrupt_stream.hex` in both `FailFast` and `SkipBadRecords` modes, and print the applied count plus every rejected record offset and reason.
 
 Your feed handler now survives corruption explicitly. The iterator stays frame-by-frame, the error handling is structured, and callers can decide whether to fail fast or skip bad records. Chapter 6 adds the next piece: pre-trade risk checks enforced by types so bad orders never reach the order book.
-Continue to <<ch06-risk-traits,Chapter 6>>.

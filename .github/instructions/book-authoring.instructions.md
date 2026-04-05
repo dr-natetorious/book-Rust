@@ -50,6 +50,14 @@ Each admonition addresses a friction point specific to the chapter topic. Not ge
 - **Teach how, not about:** The chapter teaches the reader how to act or decide, not what a concept is. Every major section answers "How do I do this?" or "Why did this fail?", not "What is a lifetime?"
 - **Print-first constraints:** Rust signatures break across lines with `where` clauses. Code examples fit narrow pages. Use `[mermaid]` for diagrams, never ASCII art.
 
+## Preservation Rules (Do Not Violate)
+
+- **No silent abridgement:** Never replace long narrative sections with short summaries, checklist bullets, or compressed recap prose unless explicitly requested.
+- **Task separation:** Build/debug/tooling requests are not permission to edit chapter narrative.
+- **Depth parity checks:** For major rewrites, keep comparable section count and narrative depth; only shorten with explicit user direction.
+- **Restore before proceed:** If prose gets condensed unintentionally, restore the affected chapter from the last known-good commit before any further edits.
+- **Artifact-first mode:** If the user asks for immediate output (for example a current-state PDF), produce the artifact first and postpone prose/process refactors.
+
 ## Voice Anti-Patterns — ALWAYS CHECK
 
 These are the most common failures that break the book's voice. Every draft must pass this filter:

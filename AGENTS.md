@@ -40,3 +40,11 @@ Every chapter update must enforce:
 4. Every concept-bearing listing has a caption (no exceptions).
 5. Chapter heading follows `== Chapter N: Title` format.
 6. At least 1 admonition (WARNING or NOTE) per chapter explaining friction points.
+
+## Narrative Integrity Guardrails
+
+1. Never collapse chapter prose into high-level summaries or recap bullets unless explicitly requested.
+2. Build/debug/tooling tasks must not trigger chapter prose rewrites.
+3. For substantial prose edits, maintain rough parity in section and narrative depth unless the user explicitly requests shortening.
+4. If prose depth regresses accidentally, restore chapter files from the latest known-good commit before making additional edits.
+5. When the user asks for a quick artifact (for example a PDF), prioritize generating that artifact immediately over refactoring scripts or instructions.

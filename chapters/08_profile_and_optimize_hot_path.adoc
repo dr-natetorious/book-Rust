@@ -1,4 +1,4 @@
-== Find and fix the allocation killing your throughput
+== Chapter 8: Find and fix the allocation killing your throughput
 
 Your chapter 7 exercise left you with shared risk state that multiple workers can safely update through `Arc<Mutex<T>>` without copying snapshots. That solved ownership and race safety, but it did nothing for throughput. The next pressure point is now visible: one tiny message-handling path still runs for every frame. If that path allocates, it allocates 500,000 times per second.
 
@@ -76,8 +76,7 @@ optimized:
   ...
   callq core::slice::iter::next
   ...
-----
-(no Vec extend in the loop)
+---- (no Vec extend in the loop)
 
 The confidence here is mechanical. If you see the allocation call is gone, you proved the change worked.
 

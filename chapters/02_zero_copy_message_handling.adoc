@@ -1,4 +1,4 @@
-== Handle All Message Types Without Allocating on the Hot Path
+== Chapter 2: Handle All Message Types Without Allocating on the Hot Path
 
 Your chapter 1 parser works because it owns everything it produces. That ownership model is safe and easy to reason about. It is also expensive. At 500,000 messages per second, each message that copies fields touches the allocator. Each allocation has fixed overhead—memory bookkeeping, fragmentation—and compounds when multiplied across millions of invocations. This chapter removes that cost by changing one assumption: instead of copying fields into owned structs, borrow them from the input buffer and pass references downstream.
 

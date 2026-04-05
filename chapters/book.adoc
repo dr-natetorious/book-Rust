@@ -3,27 +3,15 @@
 include::_attributes.adoc[]
 
 include::00_preamble.adoc[]
-
 include::01_parse_binary_feed.adoc[]
-
 include::02_zero_copy_message_handling.adoc[]
-
 include::03_order_book_state_modeling.adoc[]
-
 include::04_stream_full_day_memory_stable.adoc[]
-
 include::05_error_design_under_corruption.adoc[]
-
 include::06_traits_generics_for_risk.adoc[]
-
 include::07_shared_state_lifetimes_pointers.adoc[]
-
 include::08_profile_and_optimize_hot_path.adoc[]
-
 include::09_threads_channels_order_book_pipeline.adoc[]
-
 include::10_async_fanout_backpressure.adoc[]
-
 include::11_ffi_libz_safe_wrapper.adoc[]
-
 include::12_publish_crate_semver_api.adoc[]

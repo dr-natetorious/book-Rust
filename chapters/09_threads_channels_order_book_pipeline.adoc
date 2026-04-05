@@ -1,4 +1,4 @@
-== Process the feed and update the book at the same time
+== Chapter 9: Process the feed and update the book at the same time
 
 Your chapter 8 exercise gave you a measured hot path and evidence that threads fit your workload. Now you split the monolithic processing into two independent components: one thread reads and parses, one thread maintains and updates the order book. They communicate through a channel.
 

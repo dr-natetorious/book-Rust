@@ -1,4 +1,4 @@
-== Handle a live feed without blocking on slow consumers
+== Chapter 10: Handle a live feed without blocking on slow consumers
 
 Your chapter 9 exercise gave you a parser thread and a book thread that pass ownership safely through a channel. That architecture is clean: parser proceeds at its pace, book proceeds at its—limited synchronization, no data races.
 

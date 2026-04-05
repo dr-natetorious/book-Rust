@@ -13,6 +13,9 @@ base:
   font_color: 1a1a1a
 
 font:
+  fallbacks:
+    - Source Sans 3
+    - JetBrains Mono
   catalog:
     Source Serif 4:
       normal: SourceSerif4-Regular.ttf
