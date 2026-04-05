@@ -1,23 +1,29 @@
 == Chapter 7: Share live risk state across the platform without copying it
 
-Your risk engine from chapter 6 enforces pre-trade checks, but it still assumes a caller owns the whole state snapshot. That does not hold once feed processing, risk checks, and reporting all need current positions at the same time. Copying state per component is simple and wrong for latency.
+Your chapter 6 exercise gave you risk checks architected with traits and generics. Each check evaluates against current positions. But where do those positions live? Your code so far has assumed a single owner of state. Feed processing owns the feed, order book owns the book, risk engine owns positions.
 
-=== Three components, one state, conflicting access
+That assumes one reader per data item. Production reality is different: multiple threads or async tasks need read access to shared positions simultaneously. Feed processing wants to check risk. Reporting threads want to query positions. A single owner cannot satisfy all demands without copying, and copying is where latency goes away.
 
-Start with the read-only view first.
+This chapter solves the harder problem: multiple components need live access to the same data at the same time. You need a pattern where data is shared, reads are cheap, and updates are explicit and safe.
+
+=== Three components, one state, conflicting timelines
+
+Consider the flow: feed arrives, risk engine checks current position, order book updates state, reporting thread reads current position. All at once. Feed processing waits for the risk check. The risk check needs live position data. The order book holds mutable position state. The reporting thread needs read-only access. These requirements conflict if you use single ownership.
+
+Start with the read-only view first. Lifetimes are easier when you understand the borrowing first.
 
 [source,rust]
 ----
 include::../src/ch07/shared.rs[tag=borrowed_view]
 ----
 
-This is the first-contact lifetime move in this book: `'a` names how long the borrowed symbol and borrowed position are valid. If you know pointers and references from C++ or Rust-free systems, the bridge is direct. Rust is not inventing a new memory model here; it is making the borrowing contract explicit in the type.
+This introduces the first-contact lifetime in this book: `'a` names how long the borrowed symbol and borrowed position are valid. If you know pointers and references from C++ or systems languages, the bridge is direct. Rust is not inventing a new memory model; it is making the borrowing contract explicit in the type.
 
-Risk, book updates, and reporting all query the same symbols repeatedly while market data is flowing. That is why this chapter exists: you need shared live state with precise ownership and mutation rules.
+When you see `&'a str` and `&'a f64`, you are reading: "This reference is valid for the lifetime `'a`. The data it points to will not be modified or freed during that lifetime." The lifetime is not a runtime duration. It is a compile-time name for a borrowing relationship.
 
-=== Let the compiler show the wrong design
+=== The wrong design, caught at compile time
 
-Try to compile this. Read the error before you read the next paragraph.
+Try to compile this. Understand the error before moving forward.
 
 .Attempting mutable access through Arc without interior mutability
 [source,rust]
@@ -34,23 +40,34 @@ error[E0596]: cannot borrow data in an `Arc` as mutable
 	|     ^^^^^^^^^^^^^^^^ cannot borrow as mutable
 ----
 
+`Arc` shares ownership across threads, but it does not grant mutable access. The name matters: **Arc** is "Atomic Reference Counted," not "Atomic Reference Counted Mutable." If you want mutable access through an Arc, you need interior mutability: a Mutex or RwLock or RefCell that defers the mutability check to runtime.
+
 [WARNING]
 ====
-*Thread-safe shared state is not the default.* You must ask for it explicitly with `Arc<Mutex<>>` or `Arc<RwLock<>>`. If you forget, the compiler will refuse to compile the spawned task. You do not get silent data races.
-====\n\n`Arc` shares ownership, not mutable access. The failure is useful because it removes an entire class of race-prone design before runtime.
+*Thread-safe shared state is not the default.* You must ask for it explicitly with `Arc<Mutex<T>>` or `Arc<RwLock<T>>`. If you forget, the compiler will refuse to compile the spawned task. You do not get silent data races.
+====
 
-=== Box, Rc, Arc: choose by ownership boundary
+This is a feature. The compiler is catching a bug before runtime.
 
-[mermaid]
-....
-flowchart TD
-	 A[Need shared state?] -->|No| B[Use Box or plain value ownership]
-	 A -->|Yes| C[Single-threaded access only?]
-	 C -->|Yes| D[Use Rc plus RefCell for interior mutability]
-	 C -->|No| E[Use Arc plus Mutex for cross-thread mutation]
-....
+=== The ownership decision tree
 
-Local, single-threaded sharing uses `Rc<RefCell<T>>`.
+Here is where lifetimes, Box, Rc, and Arc fit together:
+
+.Ownership decision tree: choose by sharing scope and access pattern
+[source,rust]
+----
+graph TD
+  A[Need shared state?] -->|No| B["Use ownership directly<br/>or Box for heap allocation"]
+  A -->|Yes| C[Single-threaded access?]
+  C -->|Yes| D["Use Rc<RefCell<T>><br/>reference counted<br/>runtime borrow checking"]
+  C -->|No| E["Use Arc<Mutex<T>><br/>atomic counted<br/>sync-aware locks"]
+----
+
+This tree is your map. Follow it when you encounter shared state questions in your own code.
+
+=== Single-threaded sharing: Rc and RefCell
+
+When you have multiple references to the same data on one thread, use `Rc`. When you need mutable access through an `Rc`, wrap the mutable content in `RefCell` for runtime borrow checking.
 
 .Single-threaded shared state with runtime borrow checking
 [source,rust]
@@ -58,13 +75,19 @@ Local, single-threaded sharing uses `Rc<RefCell<T>>`.
 include::../src/ch07/shared.rs[tag=rc_refcell_state]
 ----
 
+`Rc<RefCell<T>>` says: "I have multiple readers of the same data, all on this thread, and I need to mutate the data." The `Rc` handles reference counting (when the last `Rc` drops, the data is freed). The `RefCell` handles interior mutability (it allows mutable access without exposing `&mut`; the borrow check moves to runtime).
+
 .Local mutation through RefCell borrow
 [source,rust]
 ----
 include::../src/ch07/shared.rs[tag=apply_fill_local]
 ----
 
-Cross-thread sharing uses `Arc<Mutex<T>>`.
+If you try to hold two mutable borrows from RefCell simultaneously, `borrow_mut()` will panic at runtime. This is the runtime equivalent of the compile-time borrow check. You still cannot have conflicting borrows; Rust just defers the check to runtime in this case.
+
+=== Cross-thread sharing: Arc and Mutex
+
+When you have multiple threads accessing the same data, use `Arc`. When you need mutable access, wrap the mutable content in `Mutex` for lock-based synchronization.
 
 .Cross-thread shared state with lock-based synchronization
 [source,rust]
@@ -72,13 +95,23 @@ Cross-thread sharing uses `Arc<Mutex<T>>`.
 include::../src/ch07/shared.rs[tag=arc_mutex_state]
 ----
 
+`Arc<Mutex<T>>` says: "Multiple threads have references to the same data, and I need to mutate it safely." The `Arc` handles atomic reference counting (it uses atomic operations so multiple threads can safely update the reference count). The `Mutex` handles lock-based protection (it acquires a lock before granting mutable access; other threads wait for the lock to be released).
+
 .Shared mutation through Mutex lock
 [source,rust]
 ----
 include::../src/ch07/shared.rs[tag=apply_fill_shared]
 ----
 
-Run the chapter tests and watch the split: one test validates runtime borrow conflict for `RefCell`; another validates successful shared updates across threads.
+When you call `.lock()` on a `Mutex`, you get a "guard" that holds the lock until it is dropped. Only one thread can hold the guard at a time. Other threads wait. This guarantees that mutable access is exclusive, so no two threads can mutate the data simultaneously.
+
+=== Understanding interior mutability
+
+`RefCell` and `Mutex` both provide interior mutability: they allow mutation through a shared reference. The difference is when the conflict check happens. `RefCell` checks at runtime and panics if there is a conflict. `Mutex` checks with a lock: only one thread can acquire the lock and proceed.
+
+The term is worth understanding because it explains why you need these types: normally in Rust, mutable access requires `&mut`, which the borrow checker enforces at compile time. Interior mutability allows `&T` to provide mutable behavior behind the type. The borrow checker trusts you (at compile time); `RefCell` or `Mutex` enforces the actual rule at runtime.
+
+=== Run the complete test suite
 
 .Running the Chapter 7 integration test
 [source,shell]
@@ -86,12 +119,12 @@ Run the chapter tests and watch the split: one test validates runtime borrow con
 cargo test --test integration_ch07
 ----
 
-=== Interior mutability moves one check to runtime
+One test validates that `RefCell` panics if you try to borrow mutably twice. Another test validates that `Arc<Mutex<T>>` allows two worker threads to safely update the same state. The tests are your confidence that you understand the tradeoff: `RefCell` is simpler but can panic; `Mutex` is heavier but will never panic (it just blocks waiting for the lock).
 
-`RefCell` defers exclusive-borrow enforcement to runtime, which is why `try_borrow_mut` returns a typed error. `Mutex` defers exclusivity to lock acquisition, which is why poisoning is part of the error surface. The model is still explicit; the location of enforcement moved.
-
-The dry observation for this chapter: by the time lifetimes stop feeling hostile, you realize they were documenting your architecture before you did.
+The dry observation for this chapter: by the time lifetimes stop feeling hostile, you realize they were documenting your architecture before you did. And ownership decision trees replace guessing with paths.
 
 === Exercise
 
 Build a shared live risk state that serves read-only views for reporting while two worker threads apply fills, and print the final per-symbol position map after all workers join.
+
+Your feed handler, order book, error handling, risk checks, and shared state are all in place. The platform can now process market data, maintain live state safely, and enforce preconditions. Chapter 8 asks: can it do all of this in under a microsecond per message?

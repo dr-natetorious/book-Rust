@@ -1,17 +1,29 @@
 == Chapter 4: Stream a full trading day without running out of memory
 
-You ended chapter 3 with an order book that survives the full fixture without panicking. That same code falls apart when input size stops being friendly. The next failure is not correctness. It is memory pressure from trying to stage more bytes than you need.
+Your chapter 3 order book captures state transitions as types that make bad states impossible to express. It works perfectly on your fixture. That same code breaks silently when input stops being friendly.
 
-=== Why a 5GB file does not require 5GB of RAM
+The test fixtures you have been using are tiny: dozens of messages, a few kilobytes. But actual Nasdaq ITCH data for a full trading day compresses to 3.3—5.2 gigabytes. Decompress it and you get 10—20 gigabytes of raw binary records. That is an order book problem only if you load everything into memory first and then parse. It is a memory problem if your mental model is still "load all data, then process."
 
-Start from the mistake on purpose: load everything, then parse. It works on tiny fixtures and quietly trains the wrong instinct. Run chapter 4 tests first so you have a baseline before changing flow.
+You need to flip that model. The parser from chapter 2 already consumes one record at a time. The missing part is a frame iterator that yields borrowed slices from a buffer without forcing you to hold the entire feed in memory at once. This is where Rust's explicit borrow semantics give you something you cannot easily get in other languages: you can iterate through gigabytes of data while holding only the current frame in memory.
 
-[source,shell]
+=== The frame iterator: yielding slices without copying
+
+The naive approach fails fast once data size grows. If you load the whole file, deserialize into owned Vec, walk the Vec:
+
+[source,rust]
 ----
-cargo test --test integration_ch04
+let data = std::fs::read("massive.itch")?;
+let mut messages = Vec::new();
+for chunk in data.chunks_fixed() {
+  messages.push(OwnedMessage::parse(chunk)?);
+}
+// Now you have a 10GB Vec with 300M items
+// Every one holding a copy of the parsed state
 ----
 
-The parser from chapter 2 already consumes one record at a time. The missing part is a frame iterator that yields borrowed slices and advances an offset.
+That works locally but breaks when your infrastructure team asks why you're running 64GB instances to process 3.3GB files.
+
+Rust's iterator pattern with borrowed slices lets you change that:
 
 .A frame iterator: yields borrowed payloads with advancing offset
 [source,rust]
@@ -19,13 +31,11 @@ The parser from chapter 2 already consumes one record at a time. The missing par
 include::../src/ch04/stream.rs[tag=frame_iter]
 ----
 
-This is the same tradeoff you have seen in other languages when you switch from materialized collections to streaming cursors. Rust's version is explicit because the borrow ties each payload to the source buffer, so you do not accidentally keep old frames alive forever.
+This is the same tradeoff you have seen in other languages when you switch from materialized collections to streaming cursors: skip building the intermediate Vec. Instead, yield each item one at a time. Rust's version is explicit because the borrow ties each payload to the source buffer, so you do not accidentally keep old frames alive forever.
 
-Orders get added, cancelled, and replaced all day. On active sessions, cancels dominate. You care because the cancel path can be hot for hours, and a tiny allocation in that path becomes a large bill by market close.
+=== Iterators are lazy by default, and that is the point
 
-=== Iterators are lazy, and that is the point
-
-Now implement `Iterator` so `next()` performs exactly one frame decode and returns immediately.
+The `Iterator` trait in Rust has one method: `next()`. Each call performs exactly one decode and returns immediately. No eagerness, no surprise allocations scheduled for later.
 
 .Implementing Iterator for lazy frame decoding
 [source,rust]
@@ -33,18 +43,20 @@ Now implement `Iterator` so `next()` performs exactly one frame decode and retur
 include::../src/ch04/stream.rs[tag=iterator_impl]
 ----
 
-Run one concrete action: call `next()` twice and inspect offsets. The first item starts at `0`, the second at `29` for the fixture used in tests. If those offsets drift, your memory profile might still look flat while your parser is silently skipping bytes.
+The friction you are feeling is real. Lazy evaluation requires mental discipline. With eager evaluation you can write `collect()` once and forget about how many items exist. With lazy evaluation you have to ask: "Who is consuming this iterator?" If no one calls `next()`, the iterator does nothing and produces no output and raises no error.
+
+That is the core of lazy evaluation: nothing happens until you ask for the next item. No work, no allocation, no surprise. You pay for exactly what you consume.
+
+Run one concrete action: call `next()` twice and inspect offsets. The first item starts at `0`, the second at `29` for the fixture used in tests. If those offsets drift, your memory profile might still look flat while your parser is silently skipping bytes. The test is your anchor.
 
 [WARNING]
 ====
-*Lazy iterators require discipline.* If you forget to call `next()` or consume the iterator, no work happens and no error is raised. The iterator is sitting idle. Use assertions and allocator tracking in tests to catch silent misuse.
+*Lazy iterators require intention.* If you forget to call `next()` or consume the iterator, no work happens and no error is raised. The iterator sits idle. Use assertions and allocator tracking in tests to catch silent misuse.
 ====
 
-The friction here is familiar: eager code usually looks simpler at first. Lazy code feels noisier because state moves into the iterator struct. The payoff is that you never hold more payload than the current frame.
+=== Compose iterators for staged processing
 
-=== Implement Iterator on your own types
-
-You also need a typed stream that yields parsed messages directly, not raw frame slices.
+You also need a typed stream that yields parsed events directly, not raw frame slices.
 
 .Composing iterators: from frames to parsed domain messages
 [source,rust]
@@ -52,9 +64,9 @@ You also need a typed stream that yields parsed messages directly, not raw frame
 include::../src/ch04/stream.rs[tag=parsed_message_iter_impl]
 ----
 
-This pattern matters because it scales: one iterator reads frame boundaries, the next layer turns frames into domain messages, and downstream code only sees meaningful items. You can map this directly to a familiar pipeline idea from Go channels or Java streams, but here each adapter compiles to simple loops with no hidden scheduler.
+This pattern matters because it scales. One iterator reads frame boundaries, the next adapter turns frames into domain messages (`MessageView` from chapter 2), and downstream code only sees meaningful items. Each adapter compiles to simple loops with no hidden scheduler. You can map this directly to familiar ideas from Go channels or Java streams, but here each adapter costs zero allocation.
 
-For file-backed inputs, move from borrowed slices to owned frame payloads and keep the same iterator shape.
+For file-backed inputs, move from borrowed slices to owned payloads while keeping the same iterator interface. The key is that the iterator owns the buffer, so each yielded frame is still a borrow tied to a single owner.
 
 .A file iterator: owns payloads while maintaining iterator interface
 [source,rust]
@@ -62,24 +74,9 @@ For file-backed inputs, move from borrowed slices to owned frame payloads and ke
 include::../src/ch04/stream.rs[tag=file_frame_iter]
 ----
 
-Run the failure-path test and inspect the error branch.
+The file iterator owns the buffer. Each yielded frame is a slice borrowed from that single buffer. Once the iterator drops or advances, the old frame becomes invalid. That makes it impossible to build a Vec of frames by accident.
 
-[source,shell]
-----
-cargo test --test integration_ch04 file_frame_iter_reports_truncated_header -- --exact
-----
-
-[listing]
-----
-running 1 test
-test iterator_smoke::file_frame_iter_reports_truncated_header ... ok
-
-test result: ok. 1 passed; 0 failed
-----
-
-That test only passes if truncated header detection returns a named error instead of guessing and continuing.
-
-=== Verify zero-overhead intent with cargo-asm
+=== Verify zero allocations with cargo-asm
 
 If `cargo-asm` is available in your environment, inspect the assembly for `FrameIter::next` before and after any refactor.
 
@@ -88,10 +85,26 @@ If `cargo-asm` is available in your environment, inspect the assembly for `Frame
 cargo asm book_rust::ch04::stream::FrameIter::next
 ----
 
-If `cargo-asm` is not available, use `cargo test --test integration_ch04` as your immediate confidence signal and defer assembly inspection until chapter 8.
+What you are looking for is absence of allocation calls. `call alloc::vec::Vec::extend_from_slice` should not appear in the hot path. `call core::slice::iter::next` is fine—that is the advancement logic. The confidence here is mechanical: if you see `malloc` or `Vec::push` in the assembly, your memory profile is not flat.
+
+If `cargo-asm` is not available, use `cargo test --test integration_ch04` as your immediate confidence signal. The tests include allocator tracking. A failing allocation test means you have a leak waiting in your hot path.
+
+=== Run the iterator pipeline
 
 The dry observation for this chapter is simple: the bytes do not care how elegant your iterator chain looks. They only care whether you stopped allocating.
 
+Run both the happy path and the failure tests:
+
+.Running the Chapter 4 integration test
+[source,shell]
+----
+cargo test --test integration_ch04
+----
+
+The truncation test verifies that a malformed header returns an error instead of panicking and continuing with garbage. The file iterator test confirms that you can iterate across all frames without holding them in memory simultaneously. The performance test verifies that memory stays flat across thousands of frames.
+
 === Exercise
 
-Run the parser against the chapter 3 order-flow fixture through `FileFrameIter` and verify that processing stays frame-by-frame with flat memory use while producing all records.
+Run the parser against your fixture stream through `FileFrameIter`, confirm that processing stays frame-by-frame with flat memory use across thousands of records, then check the test output for confirmed frame boundary tracking and zero unintended allocations.
+
+You now process gigabytes of data while holding only one frame at a time. The iterator chain is clean, the allocation profile is flat, and the order book can ingest the full feed. But the code still assumes every record is well-formed. Chapter 5 asks: what happens when a record is corrupted?

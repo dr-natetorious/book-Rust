@@ -1,10 +1,12 @@
 == Chapter 9: Process the feed and update the book at the same time
 
-Your chapter 8 exercise gave you a measured hot path and a reasoned choice to move forward with threads for bounded handoff. The parser still runs in the same execution lane as book mutation, so one stall blocks both. You now split those responsibilities and make ownership transfer explicit.
+Your chapter 8 exercise gave you a measured hot path and evidence that threads fit your workload. Now you split the monolithic processing into two independent components: one thread reads and parses, one thread maintains and updates the order book. They communicate through a channel.
+
+The parser no longer blocks on book mutations. The order book no longer blocks on parsing frame headers. Both keep working at their natural pace. When one gets to a sync point—passing work to the other—the transfer happens through a channel guard. This is where concurrent Rust stops being abstract and starts being concrete.
 
 === Send and Sync show where data races are impossible
 
-Try to compile this. Read the error before you read the next paragraph.
+Before writing code, try to compile this deliberately broken version. Read the compiler error instead of pressing forward.
 
 [source,rust]
 ----
@@ -20,16 +22,20 @@ error[E0596]: cannot borrow data in an `Arc` as mutable
 	|         ^^^^^^ cannot borrow as mutable
 ----
 
+The compiler stopped you from writing a data race. Not "this might have a data race." Not "this could have a data race if the scheduler aligns badly." The compiler says: "This cannot compile because the type system proves it would have a data race."
+
 [WARNING]
 ====
 *Channels transfer ownership.* Once you send a value down a channel, only the receiving thread owns it. That is the locking mechanism. If you try to send the same owned value a second time, the compiler will refuse—because it is already owned by the first receiver.
-====\n\nThat compiler stop is the chapter's first win: shared ownership does not imply shared mutable access.
+====
 
-=== Build the parser thread and hand off ownership
+That compiler stop is the chapter's first win. Shared ownership does not imply shared mutable access. You can have multiple readers; you cannot have one reader and one writer with overlapping accesses. The compiler verifies this statically.
 
-As message rates rise during volatile windows, parser work and order-book mutation compete for the same core budget; separating them lets parsing continue while book logic catches up. You still process deterministic historical bytes, but now the pressure is pipeline coordination, not just parsing correctness.
+=== The parser thread: read, parse, send
 
-Start with the parser thread that owns byte parsing and sends typed events through a channel.
+As message rates rise during volatile trading, parser work and order-book mutation compete for the same thread budget. Separating them means parsing can proceed while book logic catches up, even if the book is slower. You still process deterministic historical bytes, but now the pressure is pipeline coordination.
+
+Start with the parser thread that owns the frame iterator and sends typed events through a channel.
 
 .A parser thread: reads frames and sends typed events through a channel
 [source,rust]
@@ -37,9 +43,13 @@ Start with the parser thread that owns byte parsing and sends typed events throu
 include::../src/ch09/pipeline.rs[tag=parser_thread]
 ----
 
-=== Let the book worker own state transitions
+The parser owns the iterator. It reads one frame, parses it into a `MessageView`, tries to convert that to a `BookEvent`, and sends the event down the channel. The channel sender is moved into the thread closure, so only this thread can send.
 
-Move order-book mutation behind a single receiving worker.
+If parsing fails, the error travels through the channel too. The order book worker receives `Result<BookEvent, ParseError>` and decides what to do: fail fast or skip the bad record.
+
+=== The book worker thread: receive, apply, report
+
+Move order-book mutation behind a single receiving worker thread. This thread is the exclusive owner of the order book. No other thread can mutate it. No race conditions possible.
 
 .A book worker thread: receives events and updates shared state
 [source,rust]
@@ -47,7 +57,9 @@ Move order-book mutation behind a single receiving worker.
 include::../src/ch09/pipeline.rs[tag=book_thread]
 ----
 
-This design keeps one mutable owner of book state while still using multiple threads for throughput.
+The worker receives events from the channel. When an event arrives, it applies that event to the book. When the channel closes (the parser thread exits or panics), the worker loop exits too.
+
+This design keeps one mutable owner of book state while still using multiple threads for throughput. The parser and book worker run concurrently. If the parser gets ahead, events queue in the channel (bounded by channel capacity). If the book gets ahead, it waits for the next event.
 
 === Run the full threaded pipeline
 
@@ -57,7 +69,9 @@ This design keeps one mutable owner of book state while still using multiple thr
 include::../src/ch09/pipeline.rs[tag=run_threaded_pipeline]
 ----
 
-Run both confidence tests to see the two edges of the chapter: events apply in order on the happy path, and unknown-order events surface typed failures from the worker.
+This function spawns both threads, waits for them to finish, and collects any errors. The main thread is now a coordinator: it sets up the pipeline and then waits for completion.
+
+Run both confidence tests to see the two edges of the chapter: events apply in order on the happy path, and malformed events surface typed failures from the worker.
 
 .Running the Chapter 9 integration test
 [source,shell]
@@ -65,6 +79,16 @@ Run both confidence tests to see the two edges of the chapter: events apply in o
 cargo test --test integration_ch09
 ----
 
+The happy-path test replays a fixture through the two-thread pipeline and confirms all orders were processed. The failure test sends a malformed message and confirms the worker surfaces a typed `PipelineError` with context about which frame failed and why.
+
+=== The discipline: one channel per responsibility
+
+This scales to larger systems. One channel between parser and order book. One channel between book and risk engine. One channel between engine and reporting. Each channel carries one type of message. Each worker thread owns one piece of state.
+
+The dry observation for this chapter: once you get the first channel working, you realize you can build arbitrarily complex pipelines without deadlock or data race. The type system guarantees it.
+
 === Exercise
 
-Run the threaded pipeline against your fixture stream with at least one add and one execute message, then inject one invalid event and confirm the returned `PipelineError` includes the frame offset that failed.
+Run the threaded pipeline against your fixture stream, confirm all events apply in order, then inject one malformed event and verify that the returned `PipelineError` includes the frame offset that failed and a meaningful reason.
+
+You now have independent parser and book threads communicating safely through a channel. That solves the contention problem but creates a new one: downstream consumers (risk engine, reporting) still contend for access to the order book. Chapter 10 adds the final pattern: async fan-out with explicit backpressure.

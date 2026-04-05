@@ -1,8 +1,14 @@
 == Chapter 10: Handle a live feed without blocking on slow consumers
 
-Your chapter 9 exercise gave you a parser thread and a book thread that pass ownership safely through a channel. That architecture is clean until one downstream consumer slows down and starts dictating the pace for everyone else. This chapter turns one handoff into async fan-out with explicit backpressure accounting.
+Your chapter 9 exercise gave you a parser thread and a book thread that pass ownership safely through a channel. That architecture is clean: parser proceeds at its pace, book proceeds at its—limited synchronization, no data races.
+
+But it only handles one downstream pattern: one producer, one consumer. Production reality involves multiple consumers. The book needs to send order snapshots to: a risk engine (risk checks), reporting infrastructure (monitoring dashboards), and a logger (audit trails). Each consumer can be slow for different reasons. A slow reporting consumer should not force the parser to wait.
+
+This chapter turns one handoff into async fan-out with explicit backpressure. Each consumer lane gets its own queue. The pipeline pushes events to all queues simultaneously. If one consumer is slow, its queue fills up. When its queue is full, the producer waits. But other consumers are not affected—they continue draining their queues independently.
 
 === Futures are suspended work, not background threads
+
+Async is not about doing thing in parallel. It is about suspending work when it would block, and resuming it when it becomes unblocked. This is different from threads, where the OS scheduler is what pauses and resumes.
 
 Start by building bounded channels for each consumer lane.
 
@@ -11,20 +17,25 @@ Start by building bounded channels for each consumer lane.
 include::../src/ch10/async_fanout.rs[tag=fanout_channels]
 ----
 
-If futures are new to your Rust mental model, map them to explicit state machines you can pause and resume. The runtime polls readiness; it does not create one thread per future.
+The key is `mpsc`: multiple producer, single consumer. Actually, the book is the single producer and each consumer lane is a single receiver. But Tokio's API calls it `mpsc` for historical reasons. Each channel has a capacity. When the channel fills up, senders wait. When a receiver drains the queue, senders can resume.
+
+If futures are new to your Rust mental model, map them to explicit state machines. A future is work that can be suspended and resumed. The Tokio runtime polls readiness: "Can this future make progress right now?" If yes, it runs. If no, it parks and checks again later. This is different from threads where the OS handles parking and unparking.
 
 === Tokio is infrastructure you configure, not magic you trust blindly
 
-Run the async fan-out function with one intentionally slow consumer and a small buffer.
+The runtime needs configuration. How many worker threads? What buffer sizes? What happens if a consumer task panics?
 
+.Running the async fan-out function with consumer lanes
 [source,rust]
 ----
 include::../src/ch10/async_fanout.rs[tag=run_async_fanout]
 ----
 
-Feed plants care less about average consumer speed than about tail latency in one subscriber lane, because a slow risk or logging consumer can still force pressure on the producer queue.
+Feed plants care less about average consumer speed than about tail latency in one subscriber lane. A slow risk or logging consumer can force pressure on the producer queue even while other consumers are fast. That is what the bounded channels catch.
 
 === Observe backpressure instead of guessing at it
+
+Backpressure is not magic. It is not automatic. It is observable. A bounded queue reaches capacity, the sender waits, and you record that the producer had to wait. That is backpressure.
 
 Run the confidence tests and check that `backpressure_events` is non-zero when the slow consumer delay is enabled.
 
@@ -34,13 +45,15 @@ Run the confidence tests and check that `backpressure_events` is non-zero when t
 cargo test --test integration_ch10
 ----
 
-The hard idea here is operational: a bounded queue is not only a memory control, it is a measurement surface. Once you can count pressure events, you can decide whether to drop, shed, or slow ingestion deliberately.
+The test runs twice: once with all consumers fast, once with one consumer intentionally slow. In the slow run, look at the backpressure count. That number is not a mistake. That is evidence that the bounded queue is doing its job: throttling the producer when consumers cannot keep up.
+
+The hard idea here is operational: a bounded queue is not only a memory control, it is a measurement surface. Once you can count pressure events, you can decide whether to drop, shed, or slow ingestion deliberately. You have visibility into where the bottleneck actually is.
 
 Everything is concurrent and mostly calm until one subscriber blinks. Then the queue remembers exactly who blinked first.
 
-=== Mutex across await: see the bug shape early
+=== Mutex across await: a async footgun
 
-Try to compile this. Read the error before you read the next paragraph.
+Try to compile this. Understand the error before moving forward.
 
 .Holding a mutex guard across an await point: a bug the compiler catches
 [source,rust]
@@ -57,11 +70,25 @@ error: future cannot be sent between threads safely
 	|     ^^^^^^^^^^^^ future created by async block is not `Send`
 ----
 
+The error is cryptic at first read. What it is actually saying: "You are holding a synchronous `std::sync::Mutex` guard across an `.await` point. If this task is suspended while holding the guard, the scheduler might move the task to a different thread when it resumes. That violates the mutex invariants: a synchronous mutex cannot be held across thread boundaries."
+
 [WARNING]
 ====
 *Holding a synchronous mutex across an `.await` point is undefined behavior.* The compiler will reject the code at compile time. Use `tokio::sync::Mutex` in async contexts, not `std::sync::Mutex`.
-====\n\nThe rule is direct: do not hold synchronous mutex guards across `.await` points in spawned tasks.
+====
+
+The rule is direct: do not hold synchronous mutex guards across `.await` points in spawned tasks. Use async-aware primitives from Tokio or crossbeam.
+
+=== The async/sync decision
+
+You have async channels from Tokio for fan-out. You have bounded queues for backpressure visibility. You have error surfaces for monitoring. The pattern is: use async when you have many concurrent tasks with variable latency. Use threads and synchronous channels when you have a fixed set of workers doing CPU-bound work.
+
+Your entire system now uses both: the parser and book worker are threads (Chapter 9). The fan-out from book to risk/reporting/logger is async (this chapter). Threads for bounded, straightforward work. Async for fan-out, backpressure, and variable completion times.
+
+The dry observation for this chapter: backpressure is not a bug. It is a measurement. You do not optimize it away; you make it visible and decide what to do about it.
 
 === Exercise
 
 Run the async fan-out with three consumers and a bounded channel size of `2`, then print `backpressure_events` for a fast run and a slow-consumer run so you can compare pressure behavior directly.
+
+Your feed handler is now complete: it parses efficiently (iterators, measurement), tolerates corruption (structured errors), enforces risk checks (types), shares state safely (Arc/Mutex), runs concurrently (threads and async), handles multiple consumers (fan-out), and makes bottlenecks visible (backpressure). Chapter 11 adds one final piece: you have been manually decompressing files from the start. Now make that part of the system.

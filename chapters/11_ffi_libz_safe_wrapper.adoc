@@ -1,16 +1,30 @@
 == Chapter 11: Decompress the sample data without leaving Rust
 
-Your chapter 10 exercise gave you async fan-out with measured backpressure, but your input path still assumes someone manually unpacked data before the program started. That manual step breaks repeatability and makes automation brittle. This chapter removes that external dependency by introducing a small, explicit FFI boundary.
+Your chapter 10 exercise gave you async fan-out with measured backpressure, but your entire pipeline still assumes someone manually decompressed the sample file before the program started. That manual step breaks automation, introduces drift, and makes testing harder.
+
+Nasdaq distributes ITCH data compressed with zlib. You have been ignoring that step. Now make decompression part of the system so ingestion runs from one command: "download, decompress, ingest, process."
+
+This chapter introduces unsafe code for the first time. Not because Rust requires it for this task—plenty of Rust compression libraries exist—but because this is where unsafe becomes un-avoidable: you need to call C code.
 
 === Start from the practical problem you already have
 
-You have been handling fixture and sample files as if decompression happens elsewhere. Move that boundary into your code so ingestion can run from one command.
+You have been staging decompressed data in test fixtures by hand. That works for learning but breaks for correctness. When you hand someone a 3.3GB compressed file and ask them to run your system against it, what happens? They uncompress it (sometimes wrong), they decompress it to the wrong path, they run the tool, and nothing matches your test environment.
+
+Move the decompression boundary into your code.
 
 === Unsafe is a permission set, not a style choice
 
-At this stage, one paragraph of domain context is enough: sample market data is commonly distributed compressed, and preprocessing outside your pipeline adds operational drift between development and production. You are not chasing nanoseconds here; you are removing a fragile manual step that changes what data your tests and runs actually see.
+`unsafe` is not an escape hatch from Rust's type system. It is a permission to do specific things the compiler cannot verify:
+- Dereference raw pointers
+- Call unsafe functions or FFI
+- Access mutable statics
+- Implement unsafe traits
 
-Try to compile this. Read the risk before you read the safe wrapper.
+Each permission comes with preconditions. If you violate the preconditions, you get undefined behavior. That is not Rust's fault; that is the C library's contract, which you must honor in code.
+
+This chapter's domain context is minimal: sample files are distributed compressed for archive efficiency. Preprocessing outside your pipeline adds operational drift. You want to eliminate that step. That is the only justification you need.
+
+Try to compile this deliberately broken wrapper. Read the Miri report before proceeding.
 
 [source,rust]
 ----
@@ -26,10 +40,14 @@ error: Undefined Behavior: out-of-bounds pointer arithmetic
 
 [WARNING]
 ====
-*Unsafe does not mean "no rules." It means "rules trusted to you."* Document the contract, state preconditions, and test violations. Miri will find many bugs faster than production users.
-====\n\n`unsafe` lets you perform operations the compiler cannot verify, so your job is to state and enforce the safety contract in code shape.
+*Unsafe does not mean "no rules." It means "rules trusted to you."* Document the contract, state preconditions, and test violations. Miri will find many bugs faster than production users and makes much better feedback.
+====
+
+`unsafe` lets you perform operations the compiler cannot verify. Your job is to state and enforce the safety contract in code shape—not by comment, but in tests. Miri (an interpreter that detects undefined behavior) will catch violations faster than memory-safety tools will.
 
 === Wrap the C boundary in a safe function
+
+Rust's strength is making unsafe boundaries small and auditable. Take the C library's raw interface (generic pointers, status codes returned as integers) and wrap it in Rust types that make misuse impossible.
 
 .A safe Rust wrapper around the C decompression library
 [source,rust]
@@ -37,7 +55,15 @@ error: Undefined Behavior: out-of-bounds pointer arithmetic
 include::../src/ch11/libz_wrapper.rs[tag=safe_decompress]
 ----
 
-The wrapper owns three responsibilities: allocate output, call the foreign function, and map status codes to explicit Rust errors.
+The wrapper owns three responsibilities: allocate output (caller provides size), call the foreign function, and map (potentially error) status codes to explicit Rust errors. The `unsafe` block is small: four lines. The ownership relationship is clear: the function allocates the output, calls the C function, and returns the owned Vec or an error. The caller cannot do anything wrong because the interface is too constrained.
+
+The FFI contract is:
+- Input: pointer to compressed data, input length
+- Output: pointer to output buffer, output capacity, number of bytes written
+- Status: integer status code
+- Behavior: writes to output buffer, returns status
+
+Document what the caller must ensure (input is valid UTF-8 if you care about encoding; output capacity is correct). Rust checks everything else.
 
 === Make the contract executable in tests
 
@@ -47,10 +73,37 @@ The wrapper owns three responsibilities: allocate output, call the foreign funct
 include::../src/ch11/libz_wrapper.rs[tag=ffi_contract]
 ----
 
-This test contract is deterministic: one byte declares payload length, remaining bytes carry data. That gives you a stable harness for success and corruption paths without network or timing variability.
+This test contract is deterministic: one byte declares payload length, remaining bytes carry data. That gives you a stable harness for success and corruption paths without network or timing variability. If decompression fails, you get a typed `LibzError`. If the output size is wrong, assertions catch it. If the input is actually corrupted (declared length differs from actual), the wrapper returns an error instead of guessing and continuing.
 
-Miri finds undefined behavior faster than production users, and it is dramatically less judgmental about the time of day.
+The test harness lets you verify safety without relying on fuzzing or stress testing. You can reason about specific error paths and verify the wrapper handles them correctly.
+
+=== Run the integration tests
+
+.Running the Chapter 11 integration test
+[source,shell]
+----
+cargo test --test integration_ch11
+----
+
+The happy-path test decompresses a mock compressed payload and confirms the output matches expectations. The failure tests confirm that corruption is rejected, wrong sizes are caught, and invalid payload status codes return named errors.
+
+Miri finds undefined behavior faster than production users and is dramatically less judgmental about the time of day.
+
+=== The FFI boundary principle
+
+This pattern holds at any FFI boundary:
+1. Wrap the C API in a safe Rust function
+2. Own the allocation and ownership transfer
+3. Map C status codes to Rust errors
+4. Test the contract systematically
+5. Keep the `unsafe` block small and auditable
+
+The system you built now handles real compressed data. Everything from chapter 1 through 10 still runs. The feed handler can now download, decompress, parse, maintain state, enforce checks, and fan-out to consumers—all without manual preprocessing steps.
+
+The dry observation for this chapter: safe wrapper design moves the danger surface from "call C code" to "call this specific Rust function with this specific contract." The second one you can audit and test.
 
 === Exercise
 
 Run the safe decompression wrapper against `test/fixtures/ch11_mock_compressed.hex`, decode the payload, then intentionally corrupt the declared length and confirm your wrapper returns a typed `LibzError::CorruptInput`.
+
+Your feed handler now handles real data from start to finish. Everything works, all pieces fit together, and the type system has verified thread safety. Chapter 12 asks: how do you package this as a crate that another team can depend on without shooting themselves in the foot?

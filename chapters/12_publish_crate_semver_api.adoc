@@ -1,33 +1,55 @@
 == Chapter 12: Package the platform so another team can depend on it
 
-Your chapter 11 exercise moved decompression into your codebase with a tested safety contract. That means another team can now run the same ingestion path you run, but only if your public API prevents easy misuse. This chapter turns internal modules into a crate boundary with compile-time guidance.
+Your chapter 11 exercise moved decompression into your codebase with a tested safety contract. Everything you built—parsing, state, error handling, risk checks, concurrency, async fan-out, FFI wrapping—now works as a single system.
+
+But it is still internal. The platform is feature-complete and runs on commodity hardware. Now make it something another team can depend on without guessing at how to use it, and without their choice of version breaking their code six months from now.
+
+This chapter is about API design for the second version, not the first demo. And about semver discipline so other people's CI doesn't wake them up at 3 AM.
 
 === Design for the second version, not the first demo
 
+The first version's API is often rough. You learned by building. The second version's API is what you ship to production. It should already assume that three more teams will need this code in three years and their upgrade success matters more than your development speed.
+
 Start with a builder that cannot construct an invalid client.
 
+.A typestate builder: compile-time enforcement of construction sequence
 [source,rust]
 ----
 include::../src/ch12/api.rs[tag=typestate_builder]
 ----
 
-If typestate is new to your Rust toolkit, map it to interfaces with compile-time state transitions: each method consumes one state and returns the next valid state.
+This is a pattern called typestate. Each builder method consumes one state and returns the next valid state. You cannot call methods out of order; the compiler prevents it. You cannot construct an invalid client; if you skip required fields, the compiler refuses to compile.
+
+If typestate is new to your Rust toolkit, map it to interfaces with compile-time state transitions: each method consumes self in one state and returns self in the next state. If you cannot return the right state (you are missing required configuration), the method does not compile. There is no "configuration gets applied later" or "defaults kick in if you were not careful."
+
+This is the opposite of the builder pattern you might know from Java or Python, where you can call methods in any order and hope the final object is valid. Rust's typestate makes invalid construction impossible at compile time. The caller does not have to remember the rules; the compiler enforces them.
 
 === Control extension points with sealed traits
 
-[WARNING]
-====
-*Public APIs are contracts.* Once a function is public and released, removing it or changing its signature is a breaking change. Code your API as if it will outlive your requirements.
-====\n\nYour downstream consumers care about predictable snapshot formats more than domain internals, because integration code and monitoring pipelines depend on stable output contracts from release to release.
+Your downstream consumers care about predictable snapshot formats more than your domain internals. They write monitoring dashboards that parse your snapshots. They write audit code that depends on field names. They write integration tests against your API. If you change the snapshot format or expose a trait that someone implements, you break them.
+
+Sealed traits let you expose behavior (anyone can call the method) without exposing extension points (no one outside your crate can implement the trait).
 
 [source,rust]
 ----
 include::../src/ch12/api.rs[tag=sealed_trait]
 ----
 
-Sealing keeps trait implementation rights inside your crate while still exposing behavior to callers.
+The technique is simple: define a private marker trait, make your public trait require it. Outside your crate, no one can implement your trait because they cannot implement your private trait. Inside your crate, you control all implementations.
+
+[WARNING]
+====
+*Public APIs are contracts.* Once a function is public and released, removing it or changing its signature is a breaking change. Code your API as if it will outlive your requirements. The highest-latency production bug is often a dependency upgrade that looked safe in release notes.
+====
 
 === Make semver decisions explicit in code
+
+Semantic versioning says:
+- Major version (1.0 → 2.0): breaking changes
+- Minor version (1.0 → 1.1): backwards-compatible additions
+- Patch (1.0.0 → 1.0.1): bug fixes
+
+Your code should make this decision explicit. When you change a public API, the type system should make it obvious whether it is breaking. When you update the version, your code should verify you made the right classification.
 
 .Semantic versioning gate: classify version changes as major or patch
 [source,rust]
@@ -35,7 +57,7 @@ Sealing keeps trait implementation rights inside your crate while still exposing
 include::../src/ch12/api.rs[tag=semver_gate]
 ----
 
-Run the confidence tests and inspect both outcomes: major-version bumps classify as breaking, and malformed version strings fail with a typed error.
+Run both confidence tests and inspect the outcomes: major-version bumps classify as breaking, and malformed version strings fail with a typed error.
 
 .Running the Chapter 12 integration test
 [source,shell]
@@ -43,8 +65,47 @@ Run the confidence tests and inspect both outcomes: major-version bumps classify
 cargo test --test integration_ch12
 ----
 
-The highest-latency production bug is often a dependency upgrade that looked safe in release notes and was not.
+The tests verify that:
+1. A builder that correctly chains methods produces a valid client
+2. Sealed trait implementations cannot be added outside your crate
+3. Version transitions are classified correctly (1.0 → 2.0 is breaking; 1.0 → 1.1 is not)
+4. API promises are kept: the snapshot format is precisely the same on every 1.x release
+
+=== The contract language
+
+Your API now has language:
+- Typestate builders enforce correct construction
+- Sealed traits prevent external implementations
+- Structured errors let callers respond intelligently
+- Version gates make breaking changes explicit
+- Integration tests verify the contract works
+
+When another team adopts your crate, they read the API and patterns and they understand the rules. Nothing is a surprise.
+
+The dry observation for this chapter: good API design is not about elegance. It is about making misuse impossible and making correct use obvious.
+
+=== The second-use case
+
+You have built a platform that can ingest Nasdaq ITCH data, maintain live state, check risk, and push to multiple consumers. The typical next step is: now expose this from Python so data scientists can use it.
+
+The Epilogue will sketch that bridge via PyO3: call your Rust feed handler from Python, send order book snapshots to pandas DataFrames, drill down into specific instruments. That is where most users actually want to go. Your Rust platform becomes part of a data science stack.
+
+But that is not in this chapter. This chapter ends the book part. Your platform is feature-complete, published, and ready for production teams to build on.
 
 === Exercise
 
 Publish the crate API locally by generating a snapshot with `FeedClientBuilder` and `JsonFormat`, then change the public version from `1.x.y` to `2.0.0` and verify your semver gate classifies that change as breaking.
+
+You came here knowing systems programming and production infrastructure but not Rust. You now understand:
+- Ownership and move semantics, from binary parsing
+- Borrowing and lifetimes, from zero-copy
+- Enums and pattern matching, from state machines
+- Traits and generics, from risk checks
+- Smart pointers and interior mutability, from shared state
+- Concurrency models (threads and async), from measurement
+- Unsafe and FFI, from real C integration
+- API design and versioning, from shipping to production
+
+The toolchain, the borrow checker errors, the compiler's insistence on exhaustive matching—all of these stopped being obstacles and became a development superpower. You cannot ship undefined behavior. You cannot have data races. You cannot forget a case. The compiler is on your side.
+
+The Epilogue shows where this leads: PyO3 for Python integration, Tokio for production infrastructure, and honest perspective on where the real FPGA systems go.
