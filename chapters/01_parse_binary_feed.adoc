@@ -1,14 +1,28 @@
 == Chapter 1: Parse a Binary Market Feed from Raw Bytes
 
-`cargo test` already runs. The fixture is already in the repository. The next step is less glamorous: stop treating the feed as a blob and start reading bytes with intent.
+Your task in this chapter is concrete: read a binary stream of market data messages, parse them correctly, and hand the parsed records to the caller. That sounds routine. The Rust constraint—that you must be explicit about which code owns each value—will transform it into a lesson about memory and responsibility that no amount of documentation would have made stick.
 
-You need one working parser before you need a reusable parser. That distinction matters. The first pass is allowed to be narrow as long as it is correct.
+The preamble already covered the toolchain. Everything compiles. The tests run. Now comes the part that feels uncomfortable: you will write code that does not compile, read the error carefully, and the error will explain something you already knew but never had to make explicit.
+
+=== Why binary feeds are written at all—and what that tells you
+
+Before writing any parser, understand what makes this problem interesting.
+
+Market data flows as binary. It could be JSON—easy to parse, human-readable, simple to debug. But JSON allocates new strings for every field. It nests data in structures that waste bytes. It is not self-describing in the way a binary protocol is. At scale—500,000 messages per second, terabytes per day—JSON is expensive. Binary is precise. Every byte earns its place.
+
+The Nasdaq ITCH 5.0 protocol is the canonical example. Nasdaq publishes it freely. It is used in production. The feed you will parse runs at high volume on exchanges and trading firms, which means every design choice in it reflects a trade-off someone made about latency, precision, or network use. That precision costs you something: the bytes do not tell you anything about themselves. You have to know the layout in advance.
+
+That disconnect—between the sender who knows exactly what payload shape they are sending, and the receiver who must infer it from field offsets—is where ownership becomes real. In garbage-collected languages, ownership is implicit: someone allocates, the runtime tracks it, it gets freed when unreachable. You do not usually think about it. In C or C++, ownership is dangerous because nothing stops you from leaving garbage behind or reading freed memory. Rust's stance is different: ownership is explicit, tracked in the type system, and enforced at compile time.
+
+Binary parsing makes that explicit because you are immediately facing the question: when these bytes become structured fields, who is responsible for them? That is not an academic question. It is the question underneath every memory bug in systems code.
 
 === Reading binary without ceremony
 
-An ITCH feed is not self-describing. A message arrives as bytes, the first byte tells you the record type, the second tells you the payload length, and the rest only make sense if you already know the layout. That is enough domain context for now. The useful part is that every field has a fixed width, which means you can stop guessing and start slicing.
+An ITCH feed is not self-describing. In the Nasdaq ITCH 5.0 protocol, every message is a frame: the first byte tells you the record type ('A' for Add Order, 'E' for Execute, 'C' for Cancel), the second byte is the payload length, and the remaining bytes follow a fixed-width, big-endian layout. The protocol assumes a clean channel; truncation or bit-flips are not errors unless you check for them. That is the entire domain context you need: the bytes are structured, the structure is rigid, and corruption is data.
 
-Start with the one message type you can test end to end: Add Order.
+The useful part is that every field has a fixed width. That means you can stop guessing and start slicing.
+
+Start with the one message type you can test end to end: Add Order. This is message type `'A'` in the spec. It carries the order reference (unique per order, per session), the side (Buy or Sell), the quantity, the stock symbol, and the price.
 
 .The AddOrderMessage struct: fixed-width fields from the wire format
 [source,rust]
@@ -16,7 +30,9 @@ Start with the one message type you can test end to end: Add Order.
 include::../src/ch01/parser.rs[tag=add_order_message]
 ----
 
-This struct is deliberately owned. The stock symbol is an `[u8; 8]`, not a `String`, because the feed already decided the width. The parser's first job is to respect the wire format instead of improving it.
+This struct is deliberately owned. The stock symbol is an `[u8; 8]`, not a `String`, because the feed already decided the width. The parser's first job is to respect the wire format instead of improving it. The fields are public because you will display them downstream. The struct derives `Debug` so it prints nicely when you inspect it.
+
+The ordering here matters. The fields appear in the struct in the same order they appear in the wire protocol. That makes the next step—turning bytes into fields—obvious: read from one offset to the next, big-endian decode, copy into the struct, return.
 
 Now turn the payload bytes into that struct.
 
@@ -26,13 +42,17 @@ Now turn the payload bytes into that struct.
 include::../src/ch01/parser.rs[tag=parse_add_order]
 ----
 
-The work is blunt on purpose: take the known offsets, read them big-endian, copy the fixed-width symbol into an array, return a typed value. No framework. No parser combinators. At this stage those would mostly hide the interesting part, which is that Rust makes you state exactly who owns the parsed data.
+The work is blunt on purpose: take the known offsets, read them big-endian, copy the fixed-width symbol into an array, return a typed value. No framework. No parser combinators. At this stage those would mostly hide the interesting part, which is that Rust makes you state explicitly who owns the parsed data.
 
-If you come from C, this may look like ordinary buffer decoding with nicer error handling. If you come from Python or Java, it helps to name what the slices are doing. `&payload[0..2]` is not a copy of those bytes. It is a borrowed view into the original buffer. A pointer, in the broadest sense, points at an address where data lives. A Rust reference is a constrained pointer: it points at data, but it also carries rules about aliasing and validity that the compiler checks. That extra structure is the whole game.
+The first line of the function signature is doing more work than it appears: `fn parse_add_order(payload: &[u8]) -> Result<AddOrderMessage, ParseError>`. The `&[u8]` says: you are handing me a borrowed slice. I will read from it. I will not keep this reference around after the function returns. The `Result` says: this can fail, and I will tell you why. The `AddOrderMessage` return tells you: I am returning a fresh struct. That struct owns its data. It will survive after the slice you passed in is gone.
+
+If you come from C, this may look like ordinary buffer decoding with nicer error handling. If you come from Python or Java, it helps to name what the slices are doing. The slice `&payload[0..2]` is not a copy of those bytes. It is a borrowed view into the original buffer. A pointer, in the broadest sense, points at an address where data lives. A Rust reference is a constrained pointer: it points at data, but it also carries rules about aliasing and validity that the compiler checks. That extra structure is the whole game.
 
 === The first time ownership becomes concrete
 
-Try to compile this. Read the error before you read the next paragraph.
+This is where Rust stops feeling like syntax and starts feeling like a conversation with the compiler.
+
+Write this code and try to compile it:
 
 .Attempting to use a moved value
 [source,rust]
@@ -40,7 +60,7 @@ Try to compile this. Read the error before you read the next paragraph.
 include::../src/ch01/move_semantics_broken.rs[tag=move_after_process]
 ----
 
-The compiler error looks like this:
+When you run `cargo check`, the compiler responds:
 
 [source,text]
 ----
@@ -53,22 +73,27 @@ error[E0382]: borrow of moved value: `msg`
 	|             --- value moved here
 8  |     println!("{:?}", msg);
 	|                      ^^^ value borrowed here after move
+	|
+	= note: move occurs because `msg` has type `AddOrderMessage`,
+	        which does not implement the `Copy` trait
 ----
 
 [WARNING]
 ====
-*Move semantics are not intuitive to most programmers.* This error looks like a restriction, but it is enforcement. You cannot accidentally use a value after an owner transferred it. That is the whole point.
+*Move semantics are not intuitive to most programmers.* This error looks like a restriction, but it is enforcement. You cannot accidentally use a value after an owner transferred it.
 ====
 
-This is the chapter's real subject. Not endianness. Not byte offsets. Ownership. `process` took the message by value, so the parser result changed hands. The compiler is refusing to let you use the old binding because there is no old binding anymore. The move model sounds abstract until a parser value disappears in front of you. Then it stops being abstract.
+This is the chapter's real subject. Not endianness. Not byte offsets. Ownership. When you wrote `process(msg)`, you passed the message by value. That means the `msg` variable no longer owns the struct after the call. The `process` function owns it now. The compiler is refusing to let you use the old binding in line 8 because there is no old binding anymore.
 
-This is a useful contrast with other languages. In Python, `msg` would usually be another reference to a heap object and the question would be who mutates it later. In Java, object references behave similarly. In C++, the code might copy, move, or bind a reference depending on signatures and value categories that are easy to gloss over in a quick read. Rust forces the transfer to be explicit enough that you can see it in the function call. One owner in, zero owners left behind.
+Why does that matter? In many languages, `msg` would be a reference to an object on the heap, and after `process` receives it, both your code and the process function would have pointers to the same object. The question would be: who mutates it? When can you free it? The answers are usually "whoever took it last" and "hopefully never, let the garbage collector figure it out." Rust's move semantics eliminate that ambiguity. One owner in, zero owners left behind. After you pass a value to a function, you cannot use it unless you get it back or the function only borrows it.
 
-The fix is not mystical. Pass a reference if the callee only needs to observe the message, or return the message if the callee is supposed to own it next. Rust is forcing that decision early, while the data model is still small enough to reason about.
+This is a useful contrast with other languages. In C++, the code might copy, move, or bind a reference depending on signatures and value categories that are easy to gloss over in a quick read. Rust forces the transfer to be explicit enough that you can see it in the function call. There is nowhere to hide.
+
+How do you fix this? You need to make a choice: does `process` need ownership, or can it borrow? If it only reads, pass a reference: `process(&msg)`. If it needs to own the value, either return it afterward or accept the move as explicit ownership transfer. If you want both to work with the same value, clone: `process(msg.clone())`. But that costs memory, which is exactly why chapter 2 exists.
+
+Rust is forcing that decision at compile time, right now, while the data model is small enough to understand. You are not debugging shared-ownership bugs in production code written by someone who forgot what they passed where.
 
 That is why ownership matters beyond syntax. It answers a plain engineering question: when this function returns, who is responsible for the bytes represented by this value? Rust makes you answer that in the type system instead of in team folklore.
-
-The parser is simple enough that the error message feels almost overqualified for the job. That won't last.
 
 === Parsing a stream instead of one record
 
@@ -80,15 +105,25 @@ One Add Order payload is enough to learn the layout. It is not enough to process
 include::../src/ch01/parser.rs[tag=parse_records]
 ----
 
-This function does two jobs. First, it proves that the stream framing logic is correct: every record starts with the same two-byte header, every payload length is checked before slicing, and truncated input becomes a named error instead of a panic. Second, it shows where ownership goes. Each parsed message is pushed into a `Vec<AddOrderMessage>`, which means the stream buffer can go away and the parsed records remain valid.
+This function does two jobs. First, it proves that the stream framing logic is correct: every record starts with the same two-byte header, every payload length is checked before slicing, and truncated input becomes a named error instead of a panic. The boundary check on line 4 (`if offset + 2 > input.len()`) ensures you do not read past the end of the buffer. The length check on line 8 ensures the payload is actually present before you slice it. This is defensive programming, and it pays rent when corrupt or truncated data arrives.
 
-That last point is the important bridge to later chapters. The `Vec` lives on the heap, but the variable that owns it lives in the current stack frame. The parsed `AddOrderMessage` values are owned values inside that vector, not references back into the input stream. When `parse_records` returns, the caller gets a self-contained result. That is easy to reason about, which is exactly why chapter 1 starts here.
+Second, the function shows where ownership goes. Each parsed message is pushed into a `Vec<AddOrderMessage>`. That `Vec` lives on the heap, but the variable that owns it lives in the current stack frame. The parsed `AddOrderMessage` values are owned values inside that vector, not references back into the input stream. When `parse_records` returns, the caller gets a self-contained result. The slice you passed in—the input buffer—can go away. The messages remain valid because they own their data.
 
-That owned `Vec` is not the final architecture. It is the right architecture for chapter 1 because you need a concrete success case before you optimize anything. If you skip that step and reach for borrowing immediately, you will have two moving parts instead of one.
+That last point is the important bridge to later chapters. It is not the final architecture. It is the right architecture for chapter 1 because you need a concrete success case before you optimize anything. If you skip this step and reach for borrowing immediately, you will have two moving parts instead of one. Zero-copy parsing is chapter 2's problem. Correctness is chapter 1's.
+
+=== Owning the result: why Vec makes sense here
+
+The choice to return `Vec<AddOrderMessage>` is worth examining because it is not going to last. Later chapters will get more sophisticated about ownership. But it is exactly right for now.
+
+You could return an iterator and parse lazily. That would avoid allocating the entire result upfront. But then the parsed messages would hold references into the input buffer, and you would have to keep that buffer alive somehow. That is more moving parts. It is also harder to test: lazy evaluation means results surprise you when you force them.
+
+You could return a single `AddOrderMessage` and make the caller loop. Then the caller does the iteration logic. That distributes concern across multiple functions.
+
+The upfront allocation—parse everything, store in a `Vec`, return it—is one problem solved once. The `Vec` grows as needed, then you are done. The caller gets a self-contained result. That simplicity is worth the temporary memory cost in chapter 1. Chapter 4 will optimize it away.
 
 === Running the parser against a real fixture
 
-The repository already has a deterministic hex fixture and a smoke test around it. Run the test first.
+The repository already has a deterministic hex fixture and a smoke test around it. This is the first moment where you run code and see real output.
 
 .Running the Chapter 1 integration test
 [source,shell]
@@ -96,10 +131,35 @@ The repository already has a deterministic hex fixture and a smoke test around i
 cargo test --test integration_ch01
 ----
 
-Then add a tiny binary or temporary `println!` in your local branch and print the parsed Add Order records from that same fixture. The important thing is not the display format. The important thing is that the bytes become fields you can name without losing track of ownership.
+You should see:
 
-When the test passes you know three things: the framing is correct, the field extraction is correct, and truncation fails where you expect it to fail. That is enough ground to stand on before the next chapter takes the copies away.
+[source,text]
+----
+running 3 tests
+test parser_smoke::rejects_truncated_payload ... ok
+test parser_smoke::rejects_unknown_message_type ... ok
+test parser_smoke::parses_single_add_order_from_fixture ... ok
+
+test result: ok. 3 passed; 0 failed
+----
+
+Each test is small. The first two check failure paths: what happens when the payload is truncated, what happens when you encounter a message type the parser does not recognize. The third checks the happy path: use the Add Order parser on a deterministic hex fixture and verify the fields are extracted correctly.
+
+Now add a temporary debug output to inspect what you have parsed. In your local branch (do not commit this), add a `println!` to one of the tests and rerun it:
+
+[source,shell]
+----
+cargo test --test integration_ch01 parses_single_add_order_from_fixture -- --nocapture
+----
+
+You should see the struct printed with its fields. The order reference, side, shares, symbol, and price. Real data from the fixture. That is the moment it becomes concrete: bytes became fields. The types are real. The compiler checked that you are not accidentally reading garbage.
+
+When the tests pass you know three things: the framing is correct, the field extraction is correct, and truncation fails where you expect it to fail. That is enough ground to stand on before the next chapter takes the copies away. Chapter 2 will use the same parsing logic but without copying the fixed-width fields.
+
+=== The price of the approach
+
+Copying the stock symbol into the struct (`symbol: [u8; 8]`) works but is wasteful. The stock symbol is already in the input buffer. Why copy it? That question is the entire engine of chapter 2, so hold it for now. In chapter 1, you copy because it is simple. Simplicity buys you correctness. Efficiency comes after.
 
 === Exercise
 
-Run the parser against the chapter 1 fixture and print every Add Order record with its order reference, side, shares, stock symbol, and price.
+Run the parser against the chapter 1 fixture and print every Add Order record with its order reference, side, shares, stock symbol, and price. Verify the test passes and no compile errors occur.

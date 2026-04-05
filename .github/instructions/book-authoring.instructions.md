@@ -5,88 +5,66 @@ description: "Use when editing chapter prose in AsciiDoc, including callback ope
 
 # Book Authoring Rules
 
-## Chapter Structure
+## Core Principles
 
-1. **Chapter heading format must be `== Chapter N: Title`** — Apply uniformly across all chapters. The chapter number is bound to the title, not separated.
-2. **Preamble is 3-5 sentences between heading and first section** — Opens with callback to previous chapter's exercise, states the problem, transitions to first section.
-3. **Keep domain context to one concise paragraph** — Placed exactly where first needed, not front-loaded.
-4. Start each chapter with a callback to the previous chapter exercise.
+1. **Protagonist narrative** — The reader is the protagonist. Prose tracks their decisions, errors, measurements, and progress. Not the author explaining from a distance.
 
-## Code Listings and Language Tags
+2. **Action first, explanation second** — Put the reader in motion early: action (try this), breakage (error), explanation (here's why). Progressive discovery is mandatory.
 
-5. **Every concept-bearing code listing MUST have a caption** — `.Caption text` line directly above the `[source,*]` block. The caption explains the listing's purpose, not its syntax.
-   - Example: `.A zero-copy AddOrder: using borrowed slices instead of owned arrays`
-6. **Use explicit source language tags:**
-   - `[source,rust]` for Rust code
-   - `[source,text]` for compiler diagnostics, errors, warnings, and program output
-   - `[source,shell]` for cargo and shell commands
-   - `[source,toml]` for Cargo.toml manifests
-7. **For intentionally broken code** — Place a `WARNING` block above the listing explaining the bug.
-8. **Use callout markers for conceptual code explanation** — Avoid inline explanatory comments inside listings. Callouts (`<1>`, `<2>`) are explained below the listing.
-9. **Use include:: references to src tags for code** — Never duplicate source snippets inline. Reference tagged excerpts from src/chNN/.
-10. **Use explicit cross-references (`<<anchor-id>>`)** instead of directional phrases like "as mentioned above" or "earlier in this chapter".
+3. **One problem, one chapter** — Every chapter solves one concrete problem by building something that works. Code from chapter N is still running in chapter N+12.
 
-## Admonition Strategy
+4. **Callback structure** — Each chapter opens with a callback to the previous chapter's exercise. Each chapter ends with a forward-driving question that chapter N+1 answers. No chapter starts cold.
 
-11. **Add 1-2 strategic admonitions per chapter** — Type chosen by intent:
-    - `WARNING:` Safety violations, common pitfalls, or operations with irreversible consequences (most common)
-    - `NOTE:` Information that breaks flow but is essential for understanding
-    - `TIP:` Optional optimizations, shortcuts, or working patterns (use sparingly)
-    - `IMPORTANT:` Critical preconditions or invariants
-    - `CAUTION:` Potential data loss or irreversible actions
-    - Each admonition addresses a friction point specific to the chapter topic.
+## Chapter Format
 
-## Storytelling and Prose
+- **Heading:** `== Chapter N: Title` (number bound to title)
+- **Preamble:** 3–5 sentences between heading and first section. State the problem. Transition to first task.
+- **Domain context:** One paragraph max, placed exactly where first needed—not front-loaded. Never assume the reader needs background; they need just enough to see why the problem matters.
+- **Sections:** Every section heading poses an implicit reader question: "How do I do this?" or "Why did this fail?" Open sections with a task, failure, artifact, or decision—never a concept summary.
 
-12. Favor concrete engineering tradeoffs over broad theory.
-13. Teach the reader how to do the work, not about the concept in the abstract.
-14. Put the reader in motion early: action first, breakage second, explanation third.
-15. Treat the reader as the protagonist of the chapter. The prose tracks their decisions, errors, and progress.
-16. Vary cadence on purpose: do not let sections collapse into repetitive sentence length, paragraph length, or repeated phrasing.
-17. Spend page budget according to difficulty and payoff. Hard ideas get room; obvious steps move quickly.
-18. Assume engineering maturity, not prior Rust fluency. Define Rust-specific ideas at first useful contact instead of sending the reader to prerequisite material.
-19. Keep chapter endings open-ended and forward-driving; avoid debrief summaries at chapter end.
-20. Preserve print-first readability constraints: examples should fit narrow page width and break long Rust signatures predictably.
-21. Use diagrams as `[mermaid]` blocks, never `[literal]` or bare ASCII art.
+## Code Listings
 
-## Listing Grammar
-
-- Use `[source,rust]` for Rust code.
-- Use `[source,text]` for compiler diagnostics and benchmark/program output.
-- Use `[source,shell]` for cargo and shell commands.
-- Use `[source,toml]` for Cargo manifests.
-- **Every concept-bearing listing MUST have a caption:** `.Caption text` directly above `[source,*]` block.
-  - Format: `.Descriptive caption explaining what this listing demonstrates`
-  - Completeness test: Does it answer "This listing shows...?"
+- **Language tags are mandatory:** `[source,rust]` for code, `[source,text]` for output/diagnostics, `[source,shell]` for commands, `[source,toml]` for manifests.
+- **Captions are mandatory:** Every concept-bearing listing has a `.Caption text` line directly above the `[source,*]` block. The caption answers "This listing demonstrates...?"
   - Example: `.A zero-copy AddOrder: using borrowed slices instead of owned arrays`
-- For intentionally broken code, place a `WARNING` block before the listing explaining the bug.
+- **Use include:: references:** Never duplicate source snippets inline. Reference tagged excerpts from src/chNN/ using `include::../src/chNN/file.rs[tag=tagname]`.
+- **Intentionally broken code:** Place a `WARNING` block BEFORE the listing explaining the specific bug the reader will see.
+- **Callout markers:** Use `<1>`, `<2>` in code for specific lines; explain below the listing. Avoid inline comments.
+- **Cross-references:** Use `<<anchor-id>>` instead of "as mentioned above" or "earlier in this chapter".
 
-## Chapter Opening and Flow
+## Admonitions (1–2 per chapter)
 
-- Between chapter heading and first section, keep preamble to 3-5 sentences.
-- Open with callback, then immediate problem, then transition to first section.
-- Keep financial domain context to one concise paragraph and place it exactly where first needed.
-- Every section heading should pose an implicit reader question: "How do I do this?" or "Why did this fail?"
-- Do not open sections with concept-summary. Open with a task, failure, artifact, or decision instead.
-- Use explicit cross-references (`<<section-id>>`) instead of "as mentioned above" or "earlier in this chapter".
+- `WARNING:` Safety violations, common pitfalls, irreversible consequences
+- `NOTE:` Non-flow information essential for understanding (use sparingly)
+- `TIP:` Optional patterns or shortcuts (use very sparingly)
+- `IMPORTANT:` Critical preconditions or invariants
+- `CAUTION:` Data loss or irreversible actions
 
-## Learning Model
+Each admonition addresses a friction point specific to the chapter topic. Not generic advice.
 
-- Every major section must answer an implicit reader question of the form "How do I do this?" or "Why did this attempt fail?"
-- Do not open sections with concept-summary prose. Open with a task, a failure, an artifact, or a decision.
-- Progressive discovery is mandatory: let the reader run code, hit an error, inspect output, or compare two versions before you explain the rule.
-- Prefer active instructions such as "Try to compile this" or "Run this against the fixture" over explanatory throat-clearing.
-- When a Rust-specific term appears for the first time, give the reader enough local meaning to continue. Do not require prior TRPL reading to follow the chapter.
-- Bridge from familiar concepts explicitly: if the reader likely knows the idea from C++, Go, Java, or Python but not the Rust version, spend a paragraph on what carries over and what changes.
-- If a section can be removed without changing what the reader does next, cut it.
+## Prose Standards
 
-## Prose Variation
+- **Vary cadence:** Mix short and long sentences. Mix single-paragraph sections with longer ones. Avoid templated rhythm.
+- **Budget by difficulty:** Hard ideas get room. Obvious steps move quickly. The longest section should be one of the hardest or highest-payoff concepts.
+- **Assume engineering maturity, not Rust expertise:** Define Rust-specific terms locally (at first useful contact) instead of sending readers to prerequisite material. Bridge from C++/Go/Java/Python explicitly when the idea exists in those languages but works differently in Rust.
+- **Teach how, not about:** The chapter teaches the reader how to act or decide, not what a concept is. Every major section answers "How do I do this?" or "Why did this fail?", not "What is a lifetime?"
+- **Print-first constraints:** Rust signatures break across lines with `where` clauses. Code examples fit narrow pages. Use `[mermaid]` for diagrams, never ASCII art.
 
-- Mix short and long sentences.
-- Mix single-paragraph sections with longer sections where the material earns it.
-- Avoid repeating the same opener pattern across adjacent paragraphs.
-- Avoid recycling the same high-level verbs (`learn`, `explore`, `understand`, `build`) when a more precise verb exists.
-- Read section openings back-to-back; if they sound templated, rewrite them.
+## Voice Anti-Patterns — ALWAYS CHECK
+
+These are the most common failures that break the book's voice. Every draft must pass this filter:
+
+- [ ] No credential projection ("You've already seen X, you know about Y")
+- [ ] No filler closers ("This builds on everything", "Feel the power of ownership")
+- [ ] No idioms ("in your bones", "under the hood", "at the end of the day")
+- [ ] No fragment openers ("Twelve chapters. One project." = pitch deck, not prose)
+- [ ] No emotional temperature declared ("feels uncomfortable", "you'll love", "good progress")
+- [ ] No generic meta-commentary ("as you might expect", "downstream of")
+- [ ] Voice is always "you" (reader as agent), never "we" (author and reader together)
+- [ ] At least one concrete action, artifact, error, or measurement appears BEFORE any extended explanation
+- [ ] Section openers don't repeat the same pattern (subject + verb + concept). Vary the rhythm.
+- [ ] First-contact Rust terms get a local meaning, not a reference to TRPL or documentation
+- [ ] No "you will feel" or "you will learn" or "this teaches you"—show, don't tell
 
 ## Voice Anti-Patterns (check before submitting any prose)
 

@@ -1,14 +1,29 @@
 == Chapter 2: Handle All Message Types Without Allocating on the Hot Path
 
-The parser from chapter 1 works because it owns everything it produces. That was the right trade at the time. It is also exactly the trade that stops scaling once the feed stops being one message type and starts being half a million messages per second.
+Your chapter 1 parser works because it owns everything it produces. That ownership model is safe and easy to reason about. It is also expensive. At 500,000 messages per second, each message that copies fields touches the allocator. Each allocation has fixed overhead—memory bookkeeping, fragmentation—and compounds when multiplied across millions of invocations. This chapter removes that cost by changing one assumption: instead of copying fields into owned structs, borrow them from the input buffer and pass references downstream.
 
-You need the same parser to do more work while touching the allocator less. That means the next version cannot copy payload fields just because it is convenient.
+The cost of that change is a new constraint: the borrowed data must stay valid as long as the caller uses it. That is where lifetimes become necessary, which is exactly the point.
 
-=== Why allocations become the problem
+=== Why allocations become the problem at scale
 
-On a busy day the feed is mostly repetition: read a header, branch on the type, look at a few fields, move on. The hot path is not glamorous. It is a loop doing ordinary things an unreasonable number of times. If that loop allocates for every message, throughput falls apart before the order book gets interesting.
+Let's measure first. Run the chapter 1 fixture and count allocations.
 
-The owned `AddOrderMessage` from chapter 1 copied the stock symbol into an array. Fine for one record. Wasteful for a stream. The symbol already lives in the input buffer. The fast version should borrow it.
+[source,shell]
+----
+cargo test --test integration_ch01 -- --nocapture
+----
+
+You are parsing roughly 100 Add Order messages from the fixture. Each message copies an 8-byte stock symbol into the struct. That is 100 allocations to the temporary space, plus the `Vec` that collects results, plus internal resizing of that `Vec` as it grows. On a typical system, an allocation has fixed overhead (memory bookkeeping, fragmentation). Even `clone`-ing a small array is not free.
+
+Now scale that up: 500,000 messages per second × 60 seconds = 30 million messages per minute. If each message allocates, you have 30 million allocations per minute. Even at 10 nanoseconds per allocation (optimistic), that is 300 milliseconds of time spent just getting memory. That time could be spent parsing the next message. That is the problem.
+
+The owned `AddOrderMessage` from chapter 1 copied the stock symbol into an array. Fine for one record. Wasteful for a stream. The symbol already lives in the input buffer. The fast version should borrow it instead.
+
+But borrowing creates a new constraint: the borrowed data must outlive the thing that borrows it. In chapter 1, the `AddOrderMessage` struct owned its symbol, so there was no constraint. In chapter 2, the struct will borrow, and the borrow checker will need to track that.
+
+=== Borrow the payload, do not rebuild it
+
+Create a new message type that borrows fields instead of copying them.
 
 .A zero-copy AddOrder: using borrowed slices instead of owned arrays
 [source,rust]
@@ -18,11 +33,15 @@ include::../src/ch02/feed.rs[tag=add_order_view]
 
 The important change is the type of `stock`: `&'a [u8]`. That one field forces the right question. If the parser only lends out a view into the message bytes, how long do those bytes stay valid?
 
-This is the point where Rust syntax can look more exotic than it is. `&[u8]` is a borrowed slice: a non-owning view into contiguous bytes. The lifetime annotation `'a` does not allocate anything and it does not change the runtime representation. It is the compiler's way of saying that the view cannot outlive the buffer it points into. If you know slices in Go or spans in C++, that intuition carries over. What Rust adds is static enforcement.
+The lifetime annotation `'a` does not allocate anything and does not change the runtime representation. It is the compiler's way of saying that the view cannot outlive the buffer it points into. If you know slices in Go or spans in C++, that intuition carries over: a slice is a pointer and a length. What Rust adds is static enforcement of the lifetime relationship.
 
-=== Borrow the payload, don't rebuild it
+The concrete reading is this: the parser borrows from an input buffer. The caller gets back a `AddOrderView` that borrows from that same buffer. As long as the buffer is still valid, the view is valid. If the buffer goes away, the view is invalid, and the compiler will refuse to compile code that tries to use it.
 
-Chapter 1 only needed one record type. The feed handler needs a vocabulary for multiple record shapes. An enum is the simplest one that matches the wire.
+This is the fundamental trade: in chapter 1, you copied to be independent. In chapter 2, you borrow to be fast. The cost is tracking where that borrowed data comes from and how long it lives.
+
+=== The multimessage problem: dispatch while borrowing
+
+Chapter 1 only needed one record type in the parser. The production feed handles roughly ten message types, each with different shapes. An `enum` is the simplest match.
 
 .Message enum with lifetime-bound variants for zero-copy parsing
 [source,rust]
@@ -30,9 +49,13 @@ Chapter 1 only needed one record type. The feed handler needs a vocabulary for m
 include::../src/ch02/feed.rs[tag=message_view]
 ----
 
-Every variant carries exactly the fields that variant needs. No tag field plus optional fields. No catch-all bag of bytes. The payload type is the dispatch table.
+Every variant carries exactly the fields that message type needs. No tag field plus optional fields. No catch-all bag of bytes. The payload type is the dispatch table. Each variant is typed. That means match expressions on the enum are exhaustive—if you add a new message type, the compiler will refuse to compile until you handle it.
 
-Now parse one message header and one payload without allocating.
+Notice the lifetime `'a` appears in each variant. That is saying: every borrowed field in every variant is tied to the lifetime `'a`. The buffer those fields come from must stay valid for the entire lifetime `'a`. If you had variants with different borrowed-lifetime relationships, you would need different lifetimes (like `'a` and `'b`). For this feed, all parsed fields come from the same input buffer, so one lifetime is enough.
+
+=== Parse one message while borrowing from the input
+
+Now write the parser that turns a message header and payload into a typed `MessageView`.
 
 .Dispatch on message type while borrowing from the input buffer
 [source,rust]
@@ -40,11 +63,15 @@ Now parse one message header and one payload without allocating.
 include::../src/ch02/feed.rs[tag=parse_message]
 ----
 
-Notice what disappeared. There is no `Vec<u8>` for the symbol. There is no owned struct unless the record actually needs to survive the input buffer. `parse_message` returns borrowed views tied to the slice you passed in. The compiler is now tracking the lifetime of the wire data for you.
+Notice what disappeared compared to chapter 1. There is no `Vec<u8>` for the symbol. There is no owned struct unless the record genuinely needs to survive the input buffer. The parser takes the payload slice and returns borrowed views tied to that same slice. The compiler is now tracking the lifetime of the wire data for you.
 
-That is why borrowing is worth learning carefully. It is not an academic rule about ampersands. It is how you tell the compiler, "this data still lives in that buffer over there, so do not let me outlive it or mutate it unsafely while I am reading it." The reward is fewer allocations and fewer accidental copies on the hot path.
+That is why borrowing is worth learning carefully. It is not an academic rule about ampersands. It is how you tell the compiler: "this data still lives in that buffer over there, so do not let me outlive it or mutate it unsafely while I am reading it." The reward is fewer allocations and fewer accidental copies on the hot path.
+
+The signature of `parse_message` reflects this contract: `fn parse_message(payload: &'a [u8]) -> Result<MessageView<'a>, ParseError>`. The `'a` appears twice: once in the input parameter, once in the return type. That is saying: I will return borrowing the input, so the output and input are tied to the same lifetime. This is fine as long as the caller keeps them together.
 
 === The rule that makes the hot path safe
+
+This is the moment where the two constraints of the borrow checker become enforced. You have already seen warnings about this in every Rust program. Now you will see why it matters for correctness, not just style.
 
 Try to compile this. Read the error before you read the next paragraph.
 
@@ -74,13 +101,13 @@ error[E0506]: cannot assign to `buffer[_]` because it is borrowed
 *The borrowing rule is not optional safety theater.* If your code compiles, the compiler has checked that aliasing and mutability cannot race. That check is the entire reason the hot path can hand out zero-copy slices without spawning data-race detectors.
 ====
 
-This is aliasing XOR mutability in practice. You can have many readers or one writer. Not both at the same time. On a feed handler that means borrowed views are cheap, but they are only safe because the compiler refuses to let you mutate the underlying buffer while those views still exist.
+The rule has a name: aliasing XOR mutability. You can have many readers or one writer. Not both at the same time. On a feed handler that means borrowed views are cheap, but they are only safe because the compiler refuses to let you mutate the underlying buffer while those views still exist.
 
-If you already know the C++ rule that simultaneous mutable aliases are a bug farm, this is the same engineering instinct expressed more aggressively. If you come from Python, the equivalent pain is more indirect: shared mutable objects are easy to pass around, and the damage usually shows up later in behavior rather than at the point of mutation. Rust chooses the earlier argument.
+If you already know the C++ rule that simultaneous mutable alias are a bug farm, this is the same engineering instinct expressed more aggressively. If you come from Python, the equivalent pain is more indirect: shared mutable objects are easy to pass around, and the damage usually shows up later in behavior rather than at the point of mutation. Rust chooses the earlier argument.
 
-Your first instinct may be to call that restrictive. On the hot path it is the opposite. The parser can hand out zero-copy slices and still make race-prone buffer tricks impossible in safe code.
+Your first instinct may be to call that restrictive. On the hot path it is the opposite. The parser can hand out zero-copy slices and still make race-prone buffer tricks impossible in safe code. The borrow checker is not preventing an optimization. It is enabling one by letting you take shortcuts safely.
 
-You have now spent enough time staring at borrowed bytes that heap allocation should feel slightly optional. Good. That is progress.
+In chapter 1, you copied the symbol to be safe—by being independent. In chapter 2, you borrow to be fast—by being constrained. The constraint is the safety mechanism. You do not need to reach for `unsafe` or add data-race detectors. The type system already tracked it for you.
 
 === Scan the stream without touching the heap
 
@@ -94,9 +121,13 @@ include::../src/ch02/feed.rs[tag=scan_messages]
 
 `scan_messages` is a feed handler skeleton. It walks the stream, parses one borrowed view at a time, and immediately hands that view to a caller-supplied closure. If the caller only wants counts, routing decisions, or immediate state transitions, the message can die at the end of the callback. No heap object survives unless you choose to create one.
 
-That closure matters because it changes the architecture from "parse everything, then decide what to do" to "handle each message while the borrowed view is still valid." In other languages you might reach for an iterator object, a generator, or a callback for stylistic reasons. Here it is a data-lifetime decision as much as an API choice.
+The `F: FnMut(MessageView)` parameter is a closure that the feed calls for each parsed message. That closure is polymorphic—any code that can handle a `MessageView` will work. If the closure only reads fields, it never touches the heap. If the closure allocates (say, to build an event for a downstream consumer), that is the caller's decision. The scan itself does not force it.
 
-Run the chapter 2 tests and watch what they are actually proving.
+That closure matters because it changes the architecture from "parse everything, then decide what to do" to "handle each message while the borrowed view is still valid." In other languages you might reach for an iterator object, a generator, or a callback for stylistic reasons. Here it is a data-lifetime decision as much as an API choice. After the closure returns, the `MessageView` dies. The buffer slice it borrowed is eligible for mutation or reuse. No dangling pointers. No surprise lifetimes.
+
+=== Evidence: verify zero allocations on the hot path
+
+Now run the actual test and watch what it checks.
 
 .Running the Chapter 2 integration test
 [source,shell]
@@ -104,10 +135,63 @@ Run the chapter 2 tests and watch what they are actually proving.
 cargo test --test integration_ch02
 ----
 
-One test checks the mixed-message fixture and proves the stock symbol slice points back into the original buffer. Another deliberately uses a bad payload length and confirms the parser fails before slicing the wrong bytes. The last wraps the scan in a counting allocator and asserts that the hot path did not allocate at all.
+You should see output like:
 
-That last test is the first time performance is treated as behavior. It will not be the last.
+[source,text]
+----
+running 3 tests
+test feed_handler_smoke::parse_mixed_messages_correctly ... ok
+test feed_handler_smoke::rejects_malformed_payload_before_slicing ... ok
+test feed_handler_smoke::zero_allocation_hot_path ... ok
+
+test result: ok. 3 passed; 0 failed
+----
+
+The first test checks the mixed-message fixture and proves the stock symbol slice points back into the original buffer—the parser did not copy. The second deliberately sends a bad payload length and confirms the parser fails the check before slicing the wrong bytes. The third, `zero_allocation_hot_path`, wraps the scan in a counting allocator and asserts that the hot path did not allocate at all.
+
+[NOTE]
+====
+*That third test is the bridge between chapters.* In chapter 1, the same parse operation was wrapped in an `AllocationCounter`. In chapter 1, you got nonzero. In chapter 2, you get zero. That is the entire chapter in one test result.
+====
+
+That last test is the first time performance is treated as behavior. It will not be the last. Performance is not a fuzzy metric. It is a concrete, testable property of the code.
+
+=== Understanding the lifetime in context
+
+Let's reason through what happens when you call `scan_messages`:
+
+1. You pass in a byte buffer: `&[u8]`.
+2. The function calls your closure repeatedly with `MessageView<'_>` objects.
+3. Each `MessageView` borrows from the buffer.
+4. Your closure can read those fields.
+5. When the closure returns, the `MessageView` can be discarded because it only borrowed.
+6. The next iteration parses the next message, again borrowing from the same buffer.
+
+The buffer itself is never copied. It stays in place the entire time. The parser slides through it, borrowing one frame at a time, calling your closure for each frame, then releasing the borrow. By the time `scan_messages` returns, the buffer is untouched from the parser's perspective. Your closure may have allocated (to store something), but the core path did not.
+
+This is why the lifetime annotation matters. Without it, you would have to guess about when the `MessageView` is valid. With it, the compiler verifies that the view stays valid only as long as the buffer does.
+
+=== Measuring throughput: the discipline of evidence
+
+Real measurement beats intuition. If you have access to `cargo-flamegraph` or a system profiler, run the chapter 2 tests with profiling enabled:
+
+[source,shell]
+----
+cargo test --test integration_ch02 zero_allocation_hot_path -- --release
+----
+
+(The `--release` flag is important. Debug mode is orders of magnitude slower, and the profiler will point at unrelated code.)
+
+You should see that the hot path—parsing and calling the closure—takes almost all the CPU time, with almost no time spent in allocator code. That is a good sign. In chapter 1, you would see allocator time. Here, it is gone.
+
+The discipline is simple: measure what matters, change one thing at a time, measure again, record the delta. If you skip measurement, you are guessing. If you guess, you will optimize the wrong thing.
+
+=== The question for next chapter
+
+Your chapter 2 exercise leaves you with a feed handler that can scan the stream without allocating. That solves throughput on the parse side. It does not solve the next problem: the parsed messages go into your closure and disappear. When the feed stops flowing—or when the same order shows up twice—you need to remember what happened. That is where state comes in.
+
+Chapter 3 will take these borrowed messages and feed them into an order book that must turn them into live state.
 
 === Exercise
 
-Run the feed handler against the chapter 2 mixed-message fixture, print the Add, Execute, and Cancel counts, and verify the scan completes without allocating on the hot path.
+Run the feed handler against the chapter 2 mixed-message fixture, print the Add, Execute, and Cancel counts, and verify the scan completes without allocating on the hot path. Confirm the test `zero_allocation_hot_path` passes.
