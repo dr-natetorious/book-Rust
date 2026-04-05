@@ -441,18 +441,21 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <h2 id="_chapter_12_package_the_platform_so_another_team_can_depend_on_it">Chapter 12: Package the platform so another team can depend on it</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Your chapter 11 exercise moved decompression into your codebase with a tested safety contract. Everything you built—parsing, state, error handling, risk checks, concurrency, async fan-out, FFI wrapping—now works as a single system.</p>
+<p>Chapter 11 closed the runtime pipeline. Chapter 12 closes the product boundary.</p>
 </div>
 <div class="paragraph">
-<p>But it is still internal. The platform is feature-complete and runs on commodity hardware. Now make it something another team can depend on without guessing at how to use it, and without their choice of version breaking their code six months from now.</p>
+<p>An internal system can tolerate tribal knowledge. A published crate cannot. External users need a contract they can read, compile against, and upgrade safely.</p>
 </div>
 <div class="paragraph">
-<p>This chapter is about API design for the second version, not the first demo. And about semver discipline so other people&#8217;s CI doesn&#8217;t wake them up at 3 AM.</p>
+<p>This chapter turns your implementation into a durable API: constrained construction, controlled extension points, and explicit version-change semantics.</p>
 </div>
 <div class="sect2">
 <h3 id="_design_for_the_second_version_not_the_first_demo">Design for the second version, not the first demo</h3>
 <div class="paragraph">
 <p>The first version&#8217;s API is often rough. You learned by building. The second version&#8217;s API is what you ship to production. It should already assume that three more teams will need this code in three years and their upgrade success matters more than your development speed.</p>
+</div>
+<div class="paragraph">
+<p>Use this filter for every public item: if you publish it, you own it for the lifetime of the major version.</p>
 </div>
 <div class="paragraph">
 <p>Start with a builder that cannot construct an invalid client.</p>
@@ -500,6 +503,9 @@ impl FeedClientBuilder&lt;Configured&gt; {
 <div class="paragraph">
 <p>This is the opposite of the builder pattern you might know from Java or Python, where you can call methods in any order and hope the final object is valid. Rust&#8217;s typestate makes invalid construction impossible at compile time. The caller does not have to remember the rules; the compiler enforces them.</p>
 </div>
+<div class="paragraph">
+<p>Typestate pays off most when misconfiguration is expensive. Feed clients are a good fit because invalid startup should fail at compile time, not after connecting to production data.</p>
+</div>
 </div>
 <div class="sect2">
 <h3 id="_control_extension_points_with_sealed_traits">Control extension points with sealed traits</h3>
@@ -535,6 +541,9 @@ impl SnapshotFormat for JsonFormat {
 <div class="paragraph">
 <p>The technique is simple: define a private marker trait, make your public trait require it. Outside your crate, no one can implement your trait because they cannot implement your private trait. Inside your crate, you control all implementations.</p>
 </div>
+<div class="paragraph">
+<p>This keeps extension policy intentional. If you later decide to open an extension point, you can do it deliberately with a new public trait and migration notes.</p>
+</div>
 <div class="admonitionblock warning">
 <table>
 <tr>
@@ -560,6 +569,9 @@ impl SnapshotFormat for JsonFormat {
 </div>
 <div class="paragraph">
 <p>Your code should make this decision explicit. When you change a public API, the type system should make it obvious whether it is breaking. When you update the version, your code should verify you made the right classification.</p>
+</div>
+<div class="paragraph">
+<p>The key discipline is to classify changes before releasing, not after users report breakage.</p>
 </div>
 <div class="listingblock">
 <div class="title">Semantic versioning gate: classify version changes as major or patch</div>
@@ -592,6 +604,37 @@ impl SnapshotFormat for JsonFormat {
 3. Version transitions are classified correctly (1.0 → 2.0 is breaking; 1.0 → 1.1 is not)
 4. API promises are kept: the snapshot format is precisely the same on every 1.x release</p>
 </div>
+<div class="paragraph">
+<p>Add contract tests for serialized outputs that external systems parse. Snapshot stability is often the first accidental breaking change.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_release_checklist_for_contract_safety">Release checklist for contract safety</h3>
+<div class="paragraph">
+<p>Before publishing each release, run a fixed checklist:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>Confirm no public signature changed unintentionally.</p>
+</li>
+<li>
+<p>Confirm typestate transitions still prohibit invalid construction.</p>
+</li>
+<li>
+<p>Confirm sealed traits remain sealed unless release notes say otherwise.</p>
+</li>
+<li>
+<p>Confirm semver gate classification matches release version.</p>
+</li>
+<li>
+<p>Confirm integration tests pass against previous minor-version fixtures.</p>
+</li>
+</ol>
+</div>
+<div class="paragraph">
+<p>This turns semver from documentation into an executable release process.</p>
+</div>
 </div>
 <div class="sect2">
 <h3 id="_the_contract_language">The contract language</h3>
@@ -608,6 +651,20 @@ impl SnapshotFormat for JsonFormat {
 </div>
 <div class="paragraph">
 <p>The dry observation for this chapter: good API design is not about elegance. It is about making misuse impossible and making correct use obvious.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<div class="title">Note</div>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The best public API is boring to upgrade. If consumers are surprised, the contract was underspecified.</p>
+</div>
+</td>
+</tr>
+</table>
 </div>
 </div>
 <div class="sect2">
@@ -650,7 +707,7 @@ impl SnapshotFormat for JsonFormat {
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2026-04-04 22:42:13 -0400
+Last updated 2026-04-05 00:01:08 -0400
 </div>
 </div>
 </body>

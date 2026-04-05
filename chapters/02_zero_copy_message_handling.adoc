@@ -1,12 +1,13 @@
-== Chapter 2: Handle All Message Types Without Allocating on the Hot Path
+[[ch-zero-copy-message-handling]]
+== Handle All Message Types Without Allocating on the Hot Path
 
-Your chapter 1 parser works because it owns everything it produces. That ownership model is safe and easy to reason about. It is also expensive. At 500,000 messages per second, each message that copies fields touches the allocator. Each allocation has fixed overhead—memory bookkeeping, fragmentation—and compounds when multiplied across millions of invocations. This chapter removes that cost by changing one assumption: instead of copying fields into owned structs, borrow them from the input buffer and pass references downstream.
+Your <<ch-parse-binary-feed,parse-binary-feed chapter>> works because it owns everything it produces. That ownership model is safe and easy to reason about. It is also expensive. At 500,000 messages per second, each message that copies fields touches the allocator. Each allocation has fixed overhead—memory bookkeeping, fragmentation—and compounds when multiplied across millions of invocations. This chapter removes that cost by changing one assumption: instead of copying fields into owned structs, borrow them from the input buffer and pass references downstream.
 
 The cost of that change is a new constraint: the borrowed data must stay valid as long as the caller uses it. That is where lifetimes become necessary, which is exactly the point.
 
 === Why allocations become the problem at scale
 
-Let's measure first. Run the chapter 1 fixture and count allocations.
+Let's measure first. Run the <<ch-parse-binary-feed,prior chapter>> fixture and count allocations.
 
 [source,shell]
 ----
@@ -17,9 +18,9 @@ You are parsing roughly 100 Add Order messages from the fixture. Each message co
 
 Now scale that up: 500,000 messages per second × 60 seconds = 30 million messages per minute. If each message allocates, you have 30 million allocations per minute. Even at 10 nanoseconds per allocation (optimistic), that is 300 milliseconds of time spent just getting memory. That time could be spent parsing the next message. That is the problem.
 
-The owned `AddOrderMessage` from chapter 1 copied the stock symbol into an array. Fine for one record. Wasteful for a stream. The symbol already lives in the input buffer. The fast version should borrow it instead.
+The owned `AddOrderMessage` from <<ch-parse-binary-feed,the previous chapter>> copied the stock symbol into an array. Fine for one record. Wasteful for a stream. The symbol already lives in the input buffer. The fast version should borrow it instead.
 
-But borrowing creates a new constraint: the borrowed data must outlive the thing that borrows it. In chapter 1, the `AddOrderMessage` struct owned its symbol, so there was no constraint. In chapter 2, the struct will borrow, and the borrow checker will need to track that.
+But borrowing creates a new constraint: the borrowed data must outlive the thing that borrows it. In the previous chapter, the `AddOrderMessage` struct owned its symbol, so there was no constraint. In this chapter, the struct will borrow, and the borrow checker will need to track that.
 
 === Borrow the payload, do not rebuild it
 
@@ -37,11 +38,11 @@ The lifetime annotation `'a` does not allocate anything and does not change the 
 
 The concrete reading is this: the parser borrows from an input buffer. The caller gets back a `AddOrderView` that borrows from that same buffer. As long as the buffer is still valid, the view is valid. If the buffer goes away, the view is invalid, and the compiler will refuse to compile code that tries to use it.
 
-This is the fundamental trade: in chapter 1, you copied to be independent. In chapter 2, you borrow to be fast. The cost is tracking where that borrowed data comes from and how long it lives.
+This is the fundamental trade: in <<ch-parse-binary-feed,the previous chapter>>, you copied to be independent. In this chapter, you borrow to be fast. The cost is tracking where that borrowed data comes from and how long it lives.
 
 === The multimessage problem: dispatch while borrowing
 
-Chapter 1 only needed one record type in the parser. The production feed handles roughly ten message types, each with different shapes. An `enum` is the simplest match.
+The previous chapter only needed one record type in the parser. The production feed handles roughly ten message types, each with different shapes. An `enum` is the simplest match.
 
 .Message enum with lifetime-bound variants for zero-copy parsing
 [source,rust]
@@ -63,7 +64,7 @@ Now write the parser that turns a message header and payload into a typed `Messa
 include::../src/ch02/feed.rs[tag=parse_message]
 ----
 
-Notice what disappeared compared to chapter 1. There is no `Vec<u8>` for the symbol. There is no owned struct unless the record genuinely needs to survive the input buffer. The parser takes the payload slice and returns borrowed views tied to that same slice. The compiler is now tracking the lifetime of the wire data for you.
+Notice what disappeared compared to <<ch-parse-binary-feed,the previous chapter>>. There is no `Vec<u8>` for the symbol. There is no owned struct unless the record genuinely needs to survive the input buffer. The parser takes the payload slice and returns borrowed views tied to that same slice. The compiler is now tracking the lifetime of the wire data for you.
 
 That is why borrowing is worth learning carefully. It is not an academic rule about ampersands. It is how you tell the compiler: "this data still lives in that buffer over there, so do not let me outlive it or mutate it unsafely while I am reading it." The reward is fewer allocations and fewer accidental copies on the hot path.
 
@@ -107,7 +108,7 @@ If you already know the C++ rule that simultaneous mutable alias are a bug farm,
 
 Your first instinct may be to call that restrictive. On the hot path it is the opposite. The parser can hand out zero-copy slices and still make race-prone buffer tricks impossible in safe code. The borrow checker is not preventing an optimization. It is enabling one by letting you take shortcuts safely.
 
-In chapter 1, you copied the symbol to be safe—by being independent. In chapter 2, you borrow to be fast—by being constrained. The constraint is the safety mechanism. You do not need to reach for `unsafe` or add data-race detectors. The type system already tracked it for you.
+In <<ch-parse-binary-feed,the previous chapter>>, you copied the symbol to be safe—by being independent. In this chapter, you borrow to be fast—by being constrained. The constraint is the safety mechanism. You do not need to reach for `unsafe` or add data-race detectors. The type system already tracked it for you.
 
 === Scan the stream without touching the heap
 
@@ -129,7 +130,7 @@ That closure matters because it changes the architecture from "parse everything,
 
 Now run the actual test and watch what it checks.
 
-.Running the Chapter 2 integration test
+.Running the integration test for <<ch-zero-copy-message-handling,zero-copy handling>>
 [source,shell]
 ----
 cargo test --test integration_ch02
@@ -151,7 +152,7 @@ The first test checks the mixed-message fixture and proves the stock symbol slic
 
 [NOTE]
 ====
-*That third test is the bridge between chapters.* In chapter 1, the same parse operation was wrapped in an `AllocationCounter`. In chapter 1, you got nonzero. In chapter 2, you get zero. That is the entire chapter in one test result.
+*That third test is the bridge between chapters.* In <<ch-parse-binary-feed,the previous chapter>>, the same parse operation was wrapped in an `AllocationCounter`. There, you got nonzero. In this chapter, you get zero. That is the entire chapter in one test result.
 ====
 
 That last test is the first time performance is treated as behavior. It will not be the last. Performance is not a fuzzy metric. It is a concrete, testable property of the code.
@@ -173,7 +174,7 @@ This is why the lifetime annotation matters. Without it, you would have to guess
 
 === Measuring throughput: the discipline of evidence
 
-Real measurement beats intuition. If you have access to `cargo-flamegraph` or a system profiler, run the chapter 2 tests with profiling enabled:
+Real measurement beats intuition. If you have access to `cargo-flamegraph` or a system profiler, run this chapter's tests with profiling enabled:
 
 [source,shell]
 ----
@@ -182,16 +183,16 @@ cargo test --test integration_ch02 zero_allocation_hot_path -- --release
 
 (The `--release` flag is important. Debug mode is orders of magnitude slower, and the profiler will point at unrelated code.)
 
-You should see that the hot path—parsing and calling the closure—takes almost all the CPU time, with almost no time spent in allocator code. That is a good sign. In chapter 1, you would see allocator time. Here, it is gone.
+You should see that the hot path—parsing and calling the closure—takes almost all the CPU time, with almost no time spent in allocator code. That is a good sign. In <<ch-parse-binary-feed,the previous chapter>>, you would see allocator time. Here, it is gone.
 
 The discipline is simple: measure what matters, change one thing at a time, measure again, record the delta. If you skip measurement, you are guessing. If you guess, you will optimize the wrong thing.
 
 === The question for next chapter
 
-Your chapter 2 exercise leaves you with a feed handler that can scan the stream without allocating. That solves throughput on the parse side. It does not solve the next problem: the parsed messages go into your closure and disappear. When the feed stops flowing—or when the same order shows up twice—you need to remember what happened. That is where state comes in.
+This chapter's exercise leaves you with a feed handler that can scan the stream without allocating. That solves throughput on the parse side. It does not solve the next problem: the parsed messages go into your closure and disappear. When the feed stops flowing—or when the same order shows up twice—you need to remember what happened. That is where state comes in.
 
-Chapter 3 will take these borrowed messages and feed them into an order book that must turn them into live state.
+<<ch-order-book-state-modeling,Order-book state modeling>> will take these borrowed messages and feed them into an order book that must turn them into live state.
 
 === Exercise
 
-Run the feed handler against the chapter 2 mixed-message fixture, print the Add, Execute, and Cancel counts, and verify the scan completes without allocating on the hot path. Confirm the test `zero_allocation_hot_path` passes.
+Run the feed handler against this chapter's mixed-message fixture, print the Add, Execute, and Cancel counts, and verify the scan completes without allocating on the hot path. Confirm the test `zero_allocation_hot_path` passes.

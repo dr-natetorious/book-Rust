@@ -1,16 +1,25 @@
-== Chapter 6: Add a pre-trade risk check the type system enforces
+[[ch-traits-generics-for-risk]]
+== Add a pre-trade risk check the type system enforces
 
-Your chapter 5 exercise gave you error handling that stays explicit even under corruption. The feed handler, order book, and iterator pipeline are all in place. Now comes the boundary that matters most: the pre-trade risk check that decides whether a new order mutates state.
+<<ch-error-design-under-corruption,Error design under corruption>> made error outcomes explicit under corrupted input. You now know where replay fails and why. This chapter moves one step earlier in the flow and asks a stricter question: should this order be allowed to mutate state at all?
 
-You need a mechanism that is configurable (different risk policies at different firms), testable (you can compose policies), and hard to bypass by accident (no easy workaround). This is where traits meet generics to create a design that the type system can verify.
+That decision belongs at a hard boundary. If every caller can invent risk behavior ad hoc, policy drifts and incident review becomes argument instead of analysis. You want a single contract that every check follows, plus an execution model you can tune for either static performance or runtime flexibility.
+
+Traits and generics give you that boundary. Traits define behavior. Generics determine when concrete behavior is bound.
 
 === Risk checks are preconditions, not reports
 
-Risk checks are gatekeepers. An order either passes the risk check and reaches the order book, or fails the check and gets rejected before state changes. There is no half-state, no "flag it for later review." The check is binary and synchronous.
+Treat risk checks as preconditions, not analytics. If the check fails, state must remain unchanged.
 
-What counts as a risk check varies: position cap (do not open more than 100,000 shares total), notional cap (do not risk more than $500,000 on this order), rate limits (do not send more than 1,000 orders per second). The point is not finance sophistication. The point is enforcing preconditions with types so each caller cannot invent its own interpretation.
+Common examples are enough for this chapter:
 
-Run the chapter 6 tests first to see both paths:
+1. Position cap: total shares cannot cross threshold.
+2. Notional cap: order value cannot cross threshold.
+3. Rate cap: order flow cannot exceed limit per interval.
+
+The finance details are secondary. The systems property is primary: validation happens before state mutation.
+
+Run this chapter's tests first to see both paths:
 
 [source,shell]
 ----
@@ -24,7 +33,7 @@ cargo test --test integration_ch06
 
 === Traits model behavior without inheritance
 
-Define the contract once. Every risk check implementation follows the same shape: given a proposed order and current positions, return approve or reject with a reason.
+Define one contract and force all implementations through it.
 
 .The RiskCheck trait: a contract for pre-trade validation
 [source,rust]
@@ -32,15 +41,32 @@ Define the contract once. Every risk check implementation follows the same shape
 include::../src/ch06/risk.rs[tag=risk_check_trait]
 ----
 
-If you come from Java or C#, this is the interface pattern with one Rust-specific difference: implementations are resolved at compile time unless you actively ask for dynamic dispatch. If you come from Go, think interface method set. If you come from Python, think abstract base class. The shape is the same in every language; only the timing of resolution differs.
+This trait is intentionally narrow: input state, candidate order, deterministic decision. A narrow trait does three useful things:
 
-The trait says: "Anything that implements `RiskCheck` must provide an `approve` method that takes an order and current positions and returns a `RiskResult`." That is the contract. The caller does not need to know which specific risk check it is using. It just needs to know that it implements the trait.
+1. Keeps implementations comparable.
+2. Keeps tests simple.
+3. Keeps accidental side effects out of validation.
 
-Your first action: implement one check and make sure `approve` fails with `RiskViolation::PositionLimit` when the attempted position crosses the cap. This is where the type system starts paying rent. If you try to return a different error variant from the approve method, the compiler will refuse to compile.
+If you later add a new rule, the compiler enforces trait conformance immediately. That avoids partial migrations where some code paths enforce new limits and others still run old logic.
+
+Your first concrete check should reject a position-cap violation with the dedicated variant. Avoid stringly-typed rejection reasons here. Structured variants make both tests and operations reliable.
+
+As soon as a second rule exists, avoid ad hoc chaining in callers. Keep composition inside the risk layer so ordering and short-circuit behavior are consistent across all entry points.
+
+=== Compose multiple checks without losing determinism
+
+Most deployments need more than one rule. The important design choice is not just which checks exist, but how they compose:
+
+1. Fixed order, stop at first violation.
+2. Fixed order, collect all violations.
+
+For low-latency paths, stop-at-first-violation is often the practical default because it bounds work and keeps rejection behavior predictable. For offline diagnostics, collect-all can be useful. Pick one behavior for each engine mode and document it.
+
+Determinism matters more than richness. If rule order changes between runs, operators cannot compare outcomes reliably.
 
 === Generics and monomorphization in hot code
 
-Use a generic engine when you want one specific risk check with zero virtual dispatch.
+Use generics when the engine can bind to one known risk-check type at compile time.
 
 .Monomorphic engine: generic type parameter resolved at compile time
 [source,rust]
@@ -48,9 +74,17 @@ Use a generic engine when you want one specific risk check with zero virtual dis
 include::../src/ch06/risk.rs[tag=generic_risk_engine]
 ----
 
-The compiler generates a concrete copy of `GenericRiskEngine<T>` for each type you instantiate it with. `GenericRiskEngine<PositionLimit>` becomes its own code path. `GenericRiskEngine<NotionalLimit>` becomes a different code path. There is no vtable, no dynamic dispatch, no hidden cost. The tradeoff is binary size: if you generate 50 different monomorphizations, your binary grows. But each one compiles to direct method calls without indirection.
+Rust monomorphizes generic code. For each concrete `T`, the compiler emits a specialized version. That produces direct calls and often better inlining in hot paths.
 
-The chapter test `generic_engine_accepts_within_limits` is your confidence anchor for the happy path. The test `generic_engine_rejects_violating_position` is your failure case.
+Tradeoff summary:
+
+1. Runtime: fast, no vtable dispatch.
+2. Build/binary: more code generated per concrete type.
+3. Deployment: stable when risk set is mostly static.
+
+Anchor this with two tests: one acceptance case and one explicit violation case. If both pass, your generic path is enforcing boundary semantics correctly.
+
+When you add multiple rule types, extend tests to verify composition order. Example: if both notional and position limits would fail, assert which violation is returned first.
 
 [NOTE]
 ====
@@ -59,7 +93,7 @@ The chapter test `generic_engine_accepts_within_limits` is your confidence ancho
 
 === Dynamic dispatch when flexibility matters more
 
-Use a trait-object engine when risk check sets vary at runtime or when you need to switch checks without recompiling.
+Use dynamic dispatch when rule selection changes at runtime or plugin-style extension is required.
 
 .Dynamic dispatch engine: trait objects for runtime flexibility
 [source,rust]
@@ -67,28 +101,65 @@ Use a trait-object engine when risk check sets vary at runtime or when you need 
 include::../src/ch06/risk.rs[tag=dyn_risk_engine]
 ----
 
-Now the risk check is stored behind a trait object (`Box<dyn RiskCheck>`). The engine does not know which concrete type it holds. At runtime, it calls through a vtable. This costs a small amount of indirection on each check, but the gain is flexibility: you can add new risk checks without recompiling the engine.
+Here, the engine stores `Box<dyn RiskCheck>`. Calls go through a vtable, which adds a small runtime indirection. In return, configuration can choose implementations without recompiling this engine layer.
+
+Use this model when operator-configured policy changes are common. Avoid it when every nanosecond on a hot path matters and rule sets are fixed per deployment.
+
+A common pattern is hybrid composition: generic engine in the core ingest path, dynamic engine in tooling or policy simulation commands. That keeps production hot paths predictable while preserving runtime experimentation outside the critical loop.
 
 The primary action is comparison: run `generic_and_dyn_engines_agree_on_rejection` and confirm both engines reject the same order under the same state. Behavior parity matters more than microbenchmarks at this stage.
 
-.Running the Chapter 6 integration test
+.Running the integration test for <<ch-traits-generics-for-risk,traits and generics for risk>>
 [source,shell]
 ----
 cargo test --test integration_ch06 generic_and_dyn_engines_agree_on_rejection -- --exact
 ----
 
-Both engines see the same order book state and the same order. Both apply the same validation logic (check position limit). Both should reject the order for the same reason. This test is your anchor that monomorphization and dynamic dispatch produce identical results; your choice is architecture, not correctness.
+If parity fails, stop and fix semantics before discussing performance. Dispatch strategy should never change decisions.
+
+=== One decision, backed by measurement
+
+Make dispatch choice with measured evidence from your environment, not generic advice. Use one repeatable fixture and capture:
+
+1. Decision latency per order.
+2. Throughput at fixed rule set.
+3. Binary size impact for generic specialization.
+
+Then decide explicitly:
+
+1. If latency is dominant and rule set is stable, keep generic dispatch.
+2. If policy agility is dominant and latency budget allows it, choose dynamic dispatch.
+
+This chapter's outcome is not "generics are always better." The outcome is "the dispatch model is chosen by a known constraint."
 
 === Traits + generics at the boundary
 
-This pattern scales to larger systems. Your feed handler layer stays generic. Your order book layer that decides whether to apply an order stays generic. Only at the top level (your main entry point or your test harness) does the generic type become concrete: `GenericRiskEngine<PositionLimit>` or `DynRiskEngine`.
+In a larger platform, keep core processing generic and bind concrete risk policy at composition boundaries (main entrypoint, service wiring, or test harness). That gives you local flexibility without leaking policy decisions into every call site.
 
-That boundary is the architectural lever. Move the boundary up (more things stay generic, bind late) and you get flexibility. Move it down (bind early) and you get performance.
+This boundary placement is the real design lever:
 
-The dry observation for this chapter: the type system will enforce your risk boundary all day, and it will not care how persuasive your exception to policy sounds.
+1. Bind early with generics for predictable hot-path cost.
+2. Bind late with trait objects for runtime configurability.
+
+Choose once per component and document it. Hidden mixed strategy is where confusion starts.
+
+At the API edge, prefer constructor names that encode dispatch mode so call sites stay readable. Clear construction makes operational intent visible in code review.
+
+[NOTE]
+====
+The strongest signal that your risk boundary is healthy is boring tests: clear accept cases, clear reject cases, and identical behavior across dispatch modes.
+====
+
+The immediate payoff is operational confidence. Orders that violate policy fail before they mutate state, and that guarantee is enforced by types, not convention.
 
 === Exercise
 
-Implement a third `RiskCheck` for per-symbol share caps, run it through both `GenericRiskEngine` and `DynRiskEngine`, and report which violations fire for the chapter fixture orders.
+Implement a third `RiskCheck` for per-symbol share caps. Run the same fixture orders through both `GenericRiskEngine` and `DynRiskEngine`, then report:
 
-Your risk engine now enforces preconditions at the boundary. The type system keeps you from forgetting a check. The trait lets you add new checks without recompiling the entire system. Chapter 7 moves to a harder problem: when multiple threads or tasks need to share the same live risk state.
+1. Which orders were accepted.
+2. Which orders were rejected.
+3. Which `RiskViolation` variant fired for each rejection.
+
+Confirm identical outcomes between both engines.
+
+You now have a risk boundary that is explicit, testable, and hard to bypass accidentally. <<ch-shared-state-lifetimes-pointers,Shared state and lifetimes>> extends this design into shared state, where multiple components need concurrent access to live risk data.

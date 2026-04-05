@@ -1,14 +1,32 @@
-== Chapter 10: Handle a live feed without blocking on slow consumers
+[[ch-async-fanout-backpressure]]
+== Handle a live feed without blocking on slow consumers
 
-Your chapter 9 exercise gave you a parser thread and a book thread that pass ownership safely through a channel. That architecture is clean: parser proceeds at its pace, book proceeds at its—limited synchronization, no data races.
+<<ch-threads-channels-order-book-pipeline,Threaded pipeline>> split parser and book work into two threads with clear ownership transfer. That solved producer/consumer contention for one downstream path. This chapter addresses the next production shape: one producer, many consumers with different latency profiles.
 
-But it only handles one downstream pattern: one producer, one consumer. Production reality involves multiple consumers. The book needs to send order snapshots to: a risk engine (risk checks), reporting infrastructure (monitoring dashboards), and a logger (audit trails). Each consumer can be slow for different reasons. A slow reporting consumer should not force the parser to wait.
+Risk checks, audit logging, and reporting do not run at the same speed. If a slow consumer can block all others, your architecture is correct and operationally fragile.
 
-This chapter turns one handoff into async fan-out with explicit backpressure. Each consumer lane gets its own queue. The pipeline pushes events to all queues simultaneously. If one consumer is slow, its queue fills up. When its queue is full, the producer waits. But other consumers are not affected—they continue draining their queues independently.
+This chapter introduces async fan-out with bounded queues so each consumer lane has isolated pressure and observable backpressure.
+
+=== Learning objectives
+
+By the end of this chapter, you should be able to:
+
+1. Build bounded async fan-out lanes with explicit pressure behavior.
+2. Measure and interpret backpressure per consumer lane.
+3. Prevent mutex-across-await failures in spawned async tasks.
+4. Define lane-level saturation policy (block, drop, or sample) from system requirements.
 
 === Futures are suspended work, not background threads
 
 Async is not about doing thing in parallel. It is about suspending work when it would block, and resuming it when it becomes unblocked. This is different from threads, where the OS scheduler is what pauses and resumes.
+
+Keep the model simple:
+
+1. A future is deferred work.
+2. `.await` is a yield point.
+3. The runtime decides when to poll again.
+
+You use async here because waiting behavior dominates, not because thread count is too low.
 
 Start by building bounded channels for each consumer lane.
 
@@ -19,7 +37,11 @@ include::../src/ch10/async_fanout.rs[tag=fanout_channels]
 
 The key is `mpsc`: multiple producer, single consumer. Actually, the book is the single producer and each consumer lane is a single receiver. But Tokio's API calls it `mpsc` for historical reasons. Each channel has a capacity. When the channel fills up, senders wait. When a receiver drains the queue, senders can resume.
 
+Capacity is a design decision, not a magic number. Small capacity surfaces consumer lag early and protects memory. Larger capacity smooths bursts and can hide chronic slow consumers. Start small in test and increase only with measured need.
+
 If futures are new to your Rust mental model, map them to explicit state machines. A future is work that can be suspended and resumed. The Tokio runtime polls readiness: "Can this future make progress right now?" If yes, it runs. If no, it parks and checks again later. This is different from threads where the OS handles parking and unparking.
+
+The practical takeaway: an `.await` inside a producer path is a potential throughput limiter. Keep awaited sections short and explicit so pressure points stay visible.
 
 === Tokio is infrastructure you configure, not magic you trust blindly
 
@@ -33,13 +55,19 @@ include::../src/ch10/async_fanout.rs[tag=run_async_fanout]
 
 Feed plants care less about average consumer speed than about tail latency in one subscriber lane. A slow risk or logging consumer can force pressure on the producer queue even while other consumers are fast. That is what the bounded channels catch.
 
+Treat fan-out lane metrics as first-class telemetry:
+
+1. Queue depth over time.
+2. Send wait duration.
+3. Dropped or delayed event counts (if you add shedding later).
+
 === Observe backpressure instead of guessing at it
 
 Backpressure is not magic. It is not automatic. It is observable. A bounded queue reaches capacity, the sender waits, and you record that the producer had to wait. That is backpressure.
 
 Run the confidence tests and check that `backpressure_events` is non-zero when the slow consumer delay is enabled.
 
-.Running the Chapter 10 integration test
+.Running the integration test for <<ch-async-fanout-backpressure,async fan-out and backpressure>>
 [source,shell]
 ----
 cargo test --test integration_ch10
@@ -48,6 +76,8 @@ cargo test --test integration_ch10
 The test runs twice: once with all consumers fast, once with one consumer intentionally slow. In the slow run, look at the backpressure count. That number is not a mistake. That is evidence that the bounded queue is doing its job: throttling the producer when consumers cannot keep up.
 
 The hard idea here is operational: a bounded queue is not only a memory control, it is a measurement surface. Once you can count pressure events, you can decide whether to drop, shed, or slow ingestion deliberately. You have visibility into where the bottleneck actually is.
+
+This is the point where architecture meets operations. Without pressure metrics, every slowdown looks like "the system is slow." With pressure metrics, you can name the lane and decide policy per lane.
 
 Everything is concurrent and mostly calm until one subscriber blinks. Then the queue remembers exactly who blinked first.
 
@@ -79,16 +109,32 @@ The error is cryptic at first read. What it is actually saying: "You are holding
 
 The rule is direct: do not hold synchronous mutex guards across `.await` points in spawned tasks. Use async-aware primitives from Tokio or crossbeam.
 
+Apply this guardrail in code review: if a lock guard variable is live at an `.await`, refactor immediately. Either narrow lock scope before `.await` or switch to async-aware synchronization.
+
 === The async/sync decision
 
 You have async channels from Tokio for fan-out. You have bounded queues for backpressure visibility. You have error surfaces for monitoring. The pattern is: use async when you have many concurrent tasks with variable latency. Use threads and synchronous channels when you have a fixed set of workers doing CPU-bound work.
 
-Your entire system now uses both: the parser and book worker are threads (Chapter 9). The fan-out from book to risk/reporting/logger is async (this chapter). Threads for bounded, straightforward work. Async for fan-out, backpressure, and variable completion times.
+Your entire system now uses both: the parser and book worker are threads (<<ch-threads-channels-order-book-pipeline,threaded pipeline>>). The fan-out from book to risk/reporting/logger is async (this chapter). Threads for bounded, straightforward work. Async for fan-out, backpressure, and variable completion times.
 
 The dry observation for this chapter: backpressure is not a bug. It is a measurement. You do not optimize it away; you make it visible and decide what to do about it.
+
+[NOTE]
+====
+Backpressure policy belongs to product requirements, not individual call sites. Define whether each lane should block, drop, or sample when saturated, then implement that policy consistently.
+====
+
+=== Completion criteria
+
+Treat this chapter as complete only when all of the following are true:
+
+1. Fast and slow-consumer runs both execute against the same fixture.
+2. `backpressure_events` is observed and explained for the slow-consumer case.
+3. No synchronous mutex guard is held across `.await` in task code.
+4. Lane saturation policy is documented and implemented consistently.
 
 === Exercise
 
 Run the async fan-out with three consumers and a bounded channel size of `2`, then print `backpressure_events` for a fast run and a slow-consumer run so you can compare pressure behavior directly.
 
-Your feed handler is now complete: it parses efficiently (iterators, measurement), tolerates corruption (structured errors), enforces risk checks (types), shares state safely (Arc/Mutex), runs concurrently (threads and async), handles multiple consumers (fan-out), and makes bottlenecks visible (backpressure). Chapter 11 adds one final piece: you have been manually decompressing files from the start. Now make that part of the system.
+Your feed handler is now complete: it parses efficiently (iterators, measurement), tolerates corruption (structured errors), enforces risk checks (types), shares state safely (Arc/Mutex), runs concurrently (threads and async), handles multiple consumers (fan-out), and makes bottlenecks visible (backpressure). xref:11_ffi_libz_safe_wrapper.adoc#ch-ffi-libz-safe-wrapper[FFI decompression] adds one final piece: you have been manually decompressing files from the start. Now make that part of the system.

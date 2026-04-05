@@ -1,8 +1,20 @@
-== Chapter 9: Process the feed and update the book at the same time
+[[ch-threads-channels-order-book-pipeline]]
+== Process the feed and update the book at the same time
 
-Your chapter 8 exercise gave you a measured hot path and evidence that threads fit your workload. Now you split the monolithic processing into two independent components: one thread reads and parses, one thread maintains and updates the order book. They communicate through a channel.
+<<ch-profile-and-optimize-hot-path,Hot-path profiling>> gave you a measured reason to split work: parsing and book mutation contend for the same core time when kept in one loop. This chapter turns that measurement into architecture.
 
-The parser no longer blocks on book mutations. The order book no longer blocks on parsing frame headers. Both keep working at their natural pace. When one gets to a sync point—passing work to the other—the transfer happens through a channel guard. This is where concurrent Rust stops being abstract and starts being concrete.
+You now run parser and book as separate workers linked by a channel. That change is not just about speed. It is about explicit ownership transfer and deterministic coordination.
+
+Parser owns byte decoding. Book worker owns mutable book state. Channel owns in-flight events. Each boundary is typed and visible.
+
+=== Learning objectives
+
+By the end of this chapter, you should be able to:
+
+1. Design a two-stage threaded pipeline with explicit ownership transfer.
+2. Use `Send` and `Sync` errors as architecture feedback, not implementation friction.
+3. Select bounded channel capacity based on backpressure and memory behavior.
+4. Implement deterministic shutdown and error propagation across worker threads.
 
 === Send and Sync show where data races are impossible
 
@@ -31,6 +43,13 @@ The compiler stopped you from writing a data race. Not "this might have a data r
 
 That compiler stop is the chapter's first win. Shared ownership does not imply shared mutable access. You can have multiple readers; you cannot have one reader and one writer with overlapping accesses. The compiler verifies this statically.
 
+Treat these trait bounds as architecture documentation:
+
+1. `Send`: value can move across thread boundary.
+2. `Sync`: shared references can be used across threads safely.
+
+When a type fails these bounds, ask whether it should cross threads at all before forcing wrappers.
+
 === The parser thread: read, parse, send
 
 As message rates rise during volatile trading, parser work and order-book mutation compete for the same thread budget. Separating them means parsing can proceed while book logic catches up, even if the book is slower. You still process deterministic historical bytes, but now the pressure is pipeline coordination.
@@ -47,6 +66,8 @@ The parser owns the iterator. It reads one frame, parses it into a `MessageView`
 
 If parsing fails, the error travels through the channel too. The order book worker receives `Result<BookEvent, ParseError>` and decides what to do: fail fast or skip the bad record.
 
+This keeps parse failures in-order relative to successful events. You do not lose temporal context, which is critical when diagnosing divergence between runs.
+
 === The book worker thread: receive, apply, report
 
 Move order-book mutation behind a single receiving worker thread. This thread is the exclusive owner of the order book. No other thread can mutate it. No race conditions possible.
@@ -61,6 +82,14 @@ The worker receives events from the channel. When an event arrives, it applies t
 
 This design keeps one mutable owner of book state while still using multiple threads for throughput. The parser and book worker run concurrently. If the parser gets ahead, events queue in the channel (bounded by channel capacity). If the book gets ahead, it waits for the next event.
 
+Channel capacity is a policy knob:
+
+1. Small bounded channel: stronger backpressure, lower memory overhead.
+2. Large bounded channel: smoother bursts, higher memory overhead.
+3. Unbounded channel: easiest start, easiest way to hide downstream slowdown.
+
+For this chapter, prefer bounded channels so slowdown is visible during testing.
+
 === Run the full threaded pipeline
 
 .Starting the parser and book worker threads
@@ -71,9 +100,11 @@ include::../src/ch09/pipeline.rs[tag=run_threaded_pipeline]
 
 This function spawns both threads, waits for them to finish, and collects any errors. The main thread is now a coordinator: it sets up the pipeline and then waits for completion.
 
+Join handling is part of correctness, not cleanup. If one worker panics and the other keeps running, you need explicit shutdown behavior. Make failure propagation deterministic: first hard error stops the pipeline and returns context.
+
 Run both confidence tests to see the two edges of the chapter: events apply in order on the happy path, and malformed events surface typed failures from the worker.
 
-.Running the Chapter 9 integration test
+.Running the integration test for <<ch-threads-channels-order-book-pipeline,threaded pipeline>>
 [source,shell]
 ----
 cargo test --test integration_ch09
@@ -81,14 +112,27 @@ cargo test --test integration_ch09
 
 The happy-path test replays a fixture through the two-thread pipeline and confirms all orders were processed. The failure test sends a malformed message and confirms the worker surfaces a typed `PipelineError` with context about which frame failed and why.
 
+Add one assertion pattern to keep: verify final book state hash for a fixture replay. Hash-based final state checks catch accidental reordering bugs that simple counts can miss.
+
 === The discipline: one channel per responsibility
 
 This scales to larger systems. One channel between parser and order book. One channel between book and risk engine. One channel between engine and reporting. Each channel carries one type of message. Each worker thread owns one piece of state.
 
+Avoid multiplexing unrelated message types through one channel unless you also define strict priority and shutdown semantics. Simplicity here keeps deadlock analysis tractable as pipeline count grows.
+
 The dry observation for this chapter: once you get the first channel working, you realize you can build arbitrarily complex pipelines without deadlock or data race. The type system guarantees it.
+
+=== Completion criteria
+
+Treat this chapter as complete only when all of the following are true:
+
+1. Parser and book worker run on separate threads and communicate only through typed channel messages.
+2. Happy-path replay produces deterministic final state for the fixture.
+3. A malformed message returns a typed `PipelineError` with useful context.
+4. Worker shutdown behavior is deterministic under both normal completion and failure.
 
 === Exercise
 
 Run the threaded pipeline against your fixture stream, confirm all events apply in order, then inject one malformed event and verify that the returned `PipelineError` includes the frame offset that failed and a meaningful reason.
 
-You now have independent parser and book threads communicating safely through a channel. That solves the contention problem but creates a new one: downstream consumers (risk engine, reporting) still contend for access to the order book. Chapter 10 adds the final pattern: async fan-out with explicit backpressure.
+You now have independent parser and book threads communicating safely through a channel. That solves the contention problem but creates a new one: downstream consumers (risk engine, reporting) still contend for access to the order book. xref:10_async_fanout_backpressure.adoc#ch-async-fanout-backpressure[Async fan-out with explicit backpressure] adds the final pattern.

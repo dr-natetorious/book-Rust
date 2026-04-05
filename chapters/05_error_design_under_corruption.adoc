@@ -1,12 +1,21 @@
-== Chapter 5: Handle every failure without crashing the platform
+[[ch-error-design-under-corruption]]
+== Handle every failure without crashing the platform
 
-Your chapter 4 iterator pipeline runs frame-by-frame without allocating. That solved memory pressure, but it exposed a new problem: one corrupt record in the middle of a 5GB file can still stop the whole replay or, worse, mutate state before failing.
+<<ch-stream-full-day-memory-stable,Streaming a full day>> gave you a memory-stable stream. The pipeline now handles a full-day file without preloading everything into RAM. That improvement exposes the next production constraint: input quality is not guaranteed.
 
-The code needs a failure model the caller can act on. Not a crash and not a mystery: an explicit error boundary with a named reason for the failure. This is where Rust's `Result` type and `?` operator stop being syntactic conveniences and start being architectural decisions.
+One malformed frame in the middle of replay can do more damage than a crash. A crash is obvious. Silent partial application is not. If invalid bytes mutate state before failing, you get a wrong order book with no clear recovery point.
+
+This chapter defines a failure boundary you can reason about: every bad record produces a typed error with enough detail to act. Rust's `Result` and `?` are the mechanics, but the real topic is policy design. Which failures stop replay? Which failures are rejected and logged so valid records keep flowing?
 
 === What corrupt feed data actually looks like
 
-Real market data corruption happens in production. Truncated transfers, mixed capture boundaries, upstream tool bugs. It is not academic. It happens every few weeks on real trading days.
+Corruption in market capture is usually boring and frequent, not dramatic:
+
+1. Truncated transfer at the tail.
+2. Bad message type byte from upstream conversion.
+3. Length field mismatch that shifts frame alignment.
+
+The practical consequence is always the same: your parser encounters bytes that do not map cleanly to the expected schema.
 
 Use the deterministic corruption fixture first.
 
@@ -23,11 +32,17 @@ feed error at offset 29: unsupported message type: 90
 ^ offset points exactly at the bad frame boundary
 ----
 
-That line is the entire chapter in miniature: named failure, precise location, actionable next step. The infrastructure receives that error, logs it with context, and decides what to do. The order book did not panic. The corrupt record was not processed. State was not mutated.
+That single line has the three properties you need in production:
+
+1. Named failure (`unsupported message type`).
+2. Precise location (`offset 29`).
+3. Actionable boundary (you know exactly where replay diverged).
+
+Without those three fields, incident response becomes guesswork. With them, you can alert, quarantine a capture, or replay from a safe checkpoint.
 
 === Make the error handling policy explicit
 
-Start by naming the choice you are making: do you stop at the first error or continue processing valid records?
+Do not hide policy in branch logic. Name it at the type level so callers choose behavior deliberately before processing begins.
 
 .Defining the failure handling policy: FailFast or SkipBadRecords
 [source,rust]
@@ -35,18 +50,31 @@ Start by naming the choice you are making: do you stop at the first error or con
 include::../src/ch05/errors.rs[tag=corruption_policy]
 ----
 
-This enum is not verbose; it is architectural. Once you pick a policy, it sticks to the entire platform. There is no runtime flag or per-message override. You choose FailFast if one bad record means the whole ingestion is suspect. You choose SkipBadRecords if you want to preserve valid orders even when some records are broken.
+Each policy implies a different operational contract:
+
+1. `FailFast`: stop at first corruption, return error immediately.
+2. `SkipBadRecords`: keep valid flow moving, preserve rejection evidence.
+
+Neither is universally correct. `FailFast` is safer for strict reconciliation pipelines where any corruption invalidates downstream results. `SkipBadRecords` is useful when partial continuity is preferred and downstream systems can tolerate explicit rejects.
 
 [WARNING]
 ====
 *Choosing between FailFast and SkipBadRecords is an operational decision, not a code smell.* The choice is made before event processing starts. There is no "I'll decide later" option. Once you choose the policy, the error surface reflects that architecture.
 ====
 
-On real feed days, most records are valid and a small fraction are broken by upstream tooling, truncation, or mixed capture boundaries. The platform decision is not whether corruption exists. It is whether you stop immediately (safe but rigid) or continue while preserving evidence (flexible but complex).
+Treat this as a first-class API decision. If policy is implicit, two teams will assume different behavior and both will be surprised in production.
+
+Make the selection criteria explicit in your runbook:
+
+1. Choose `FailFast` when downstream consumers require contiguous, fully trusted replay windows.
+2. Choose `SkipBadRecords` when continuity is more valuable than perfect completeness and rejected offsets are auditable.
+3. Reject mixed semantics in one run. A replay that sometimes fails fast and sometimes skips records is impossible to reason about after the fact.
+
+This is where platform ownership shows up. The parser does not decide policy. The caller does, once, up front.
 
 === Result and ? as design pressure
 
-The `Result` type forces a boundary at every operation that can fail. It is not just syntax sugar. It is a design question at each step: parse, convert, apply. What can go wrong here? What should happen if it does?
+`Result<T, E>` puts error propagation in signatures instead of comments. That pressure is useful because it forces decision points at parse, decode, and apply boundaries.
 
 .Applying the policy: Result and ? operator for error propagation
 [source,rust]
@@ -54,13 +82,20 @@ The `Result` type forces a boundary at every operation that can fail. It is not 
 include::../src/ch05/errors.rs[tag=replay_with_policy]
 ----
 
-In many languages, exceptions can bubble from anywhere. The boundary is implicit. In Rust, the boundary is visible in the type and in the function signature. The `?` operator says: "If this operation returns an error, stop what I am doing, return the error up to my caller, and let them decide what to do."
+Read `?` as control-flow shorthand with intent: if this step fails, stop this path and return the typed failure now.
 
-That is the pressure: you cannot ignore errors. They have to go somewhere. Either you handle them locally (inside the match arm) or you propagate them up (with `?`). You cannot push the problem into a logged warning and hope it goes away because the compiler won't let the code compile without addressing the error.
+That leaves only two honest options:
+
+1. Handle the error locally and continue under explicit policy.
+2. Propagate the error and terminate this replay path.
+
+What Rust removes is accidental swallowing. You cannot quietly forget a failing branch and still claim a total replay.
+
+Another practical benefit is review clarity. When `Result` is threaded through the pipeline, code review can verify where failures are transformed, enriched, or propagated. Hidden catch-all behavior is much harder to hide in Rust than in exception-heavy codebases.
 
 === Design errors that callers can test and act on
 
-If your error surface is one flat `String`, tests can only compare text. That is fragile. If your error is structured, tests can assert behavior and respond intelligently.
+Flat strings are easy to print and hard to automate. Structured errors are harder to design once and easier to operate forever.
 
 .A structured error type: enums for testable failure modes
 [source,rust]
@@ -68,7 +103,15 @@ If your error surface is one flat `String`, tests can only compare text. That is
 include::../src/ch05/errors.rs[tag=processing_error]
 ----
 
-Each variant carries the data a caller needs to react. `UnsupportedMessageType` includes the byte value. `InvalidTransition` includes the order reference and the reason. Time-of-day data would include a timestamp. The point is that the error surface is machine-readable, not just human-readable.
+Each variant should answer one operator question:
+
+1. What failed?
+2. Where did it fail?
+3. Can replay continue under chosen policy?
+
+This model also improves tests. You assert variant and fields, not output wording.
+
+Add context fields only when they change an operator decision. Useful fields are offset, message type, and transition identifier. Expensive fields with low decision value should stay out of the core error variant and move into optional logging.
 
 The success path should also preserve useful summary data for monitoring and retry logic.
 
@@ -78,29 +121,69 @@ The success path should also preserve useful summary data for monitoring and ret
 include::../src/ch05/errors.rs[tag=replay_report]
 ----
 
-This gives you two independent artifacts: `applied` for throughput metrics, `rejected` for diagnosis. Both are deterministic and easy to assert in tests. A downstream consumer can distinguish "I processed 299,000 valid records" from "I hit a corrupt record on record 14."
+`ReplayReport` gives you clear post-run accounting:
+
+1. `applied` for successful state transitions.
+2. `rejected` with offsets and reasons.
+
+That split matters in incidents. "Run failed" is not enough. You need to know if the failure happened before any valid application or after 900,000 valid transitions with three rejects.
+
+It also matters for retries. If you store the last applied offset and the rejected offsets, you can replay deterministically from a known-good position after fixing a data source problem.
+
+=== Build a deterministic failure test matrix
+
+Before adding new error variants, add tests in a fixed matrix:
+
+1. One corruption at first record.
+2. One corruption in middle of stream.
+3. One corruption at end of stream.
+4. Multiple corruptions with valid records between them.
+
+Run the matrix under both policies. The expected behavior should be obvious from the policy name alone. If you need a long explanation to justify expected output, the API surface is too ambiguous.
 
 === Run both failure modes and inspect the difference
 
-.Running the Chapter 5 integration tests
+.Running the integration tests for <<ch-error-design-under-corruption,error design under corruption>>
 [source,shell]
 ----
 cargo test --test integration_ch05 fail_fast_stops_on_first_bad_record -- --exact
 cargo test --test integration_ch05 skip_bad_records_keeps_valid_records_moving -- --exact
 ----
 
-The `fail_fast` test confirms that corruption stops the replay immediately and returns a typed error. The `skip_records` test confirms that valid orders are still processed while corruption is logged. Run both and observe the difference in applied count and error breakdown.
+Use these tests as policy acceptance checks:
+
+1. `fail_fast`: first bad record stops processing and returns immediate typed failure.
+2. `skip_bad_records`: bad record is recorded, valid records continue.
+
+Capture both outputs. If counts differ from expectation, your branch behavior is no longer aligned with policy names.
+
+Also assert ordering of rejections under `SkipBadRecords`. Stable ordering by offset is operationally important because it lets you compare runs and identify whether upstream capture quality is degrading over time.
 
 === Library code propagates, test code panics
 
-One more principle: library code (this feed handler) propagates errors and lets callers decide. Test code and CLI tools panic when they hit conditions that should never happen.
+Keep panic boundaries strict:
 
-This mirrors patterns you already know from production services: malformed request returns an error; impossible internal state aborts loudly. An order book receiving a message that cannot be parsed is user input. An order book state corrupting itself due to a logic bug is a programmer error.
+1. Library code returns typed errors.
+2. Tests panic on impossible invariants.
+3. CLI entry points may panic on unrecoverable startup failures.
 
-The dry observation for this chapter: once you can name every failure, the scary part is no longer the crash. It is the list of failures that were always there but you could not see.
+This separation prevents a common failure mode where libraries panic because callers did not sanitize input. For a feed handler, malformed records are input reality, not exceptional logic bugs.
+
+[NOTE]
+====
+When an error type is hard to test, it is usually hard to operate. Add structure first, then improve wording.
+====
+
+The practical payoff of this chapter is visibility. You now have a replay surface that can report exactly what failed and why, without sacrificing deterministic control flow.
 
 === Exercise
 
-Run replay on `test/fixtures/ch05_corrupt_stream.hex` in both `FailFast` and `SkipBadRecords` modes, and print the applied count plus every rejected record offset and reason.
+Run replay on `test/fixtures/ch05_corrupt_stream.hex` in both `FailFast` and `SkipBadRecords` modes. For each run, print:
 
-Your feed handler now survives corruption explicitly. The iterator stays frame-by-frame, the error handling is structured, and callers can decide whether to fail fast or skip bad records. Chapter 6 adds the next piece: pre-trade risk checks enforced by types so bad orders never reach the order book.
+1. Total applied records.
+2. Total rejected records.
+3. Every rejected offset and variant.
+
+Verify that `FailFast` returns after first reject and `SkipBadRecords` continues processing valid frames.
+
+Your pipeline now has explicit failure contracts instead of ad hoc branches. You can ingest under corruption without guessing what happened. <<ch-traits-generics-for-risk,Traits and generics for risk>> builds on that boundary and introduces pre-trade risk checks enforced by traits and types.

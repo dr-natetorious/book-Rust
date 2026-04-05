@@ -1,8 +1,20 @@
-== Chapter 8: Find and fix the allocation killing your throughput
+[[ch-profile-and-optimize-hot-path]]
+== Find and fix the allocation killing your throughput
 
-Your chapter 7 exercise left you with shared risk state that multiple workers can safely update through `Arc<Mutex<T>>` without copying snapshots. That solved ownership and race safety, but it did nothing for throughput. The next pressure point is now visible: one tiny message-handling path still runs for every frame. If that path allocates, it allocates 500,000 times per second.
+<<ch-shared-state-lifetimes-pointers,Shared state and lifetimes>> gave you safe shared state. Safety is necessary and insufficient. Throughput now becomes the visible constraint.
 
-This chapter is about measurement discipline. Not guessing which code is slow. Not optimizing the wrong path. Establishing a baseline, measuring evidence, and making one change at a time while verifying the effect.
+At feed scale, tiny costs dominate. One extra allocation in a per-message path is not one allocation. It is hundreds of thousands per second. That cost leaks into latency variance, allocator contention, and inflated hardware requirements.
+
+This chapter is about evidence-driven optimization: establish baseline, isolate hot path, make one change, verify outcome, keep or revert.
+
+=== Learning objectives
+
+By the end of this chapter, you should be able to:
+
+1. Establish a repeatable baseline for throughput and allocations.
+2. Isolate one hot path and prove a cost reduction with fixture-stable tests.
+3. Validate optimization claims using generated artifacts (`cargo asm`) instead of intuition.
+4. Choose threads or async based on workload shape, not framework preference.
 
 === Establish a baseline before you optimize anything
 
@@ -21,7 +33,9 @@ Run it against your deterministic fixture stream and capture three values: parse
 cargo test --test integration_ch08 hot_path_smoke::baseline_profile_establishes_reference_point
 ----
 
-The output tells you: "Parsed 100 messages, including 87 add orders, with 2610 allocations." Write this down. This is your baseline. Any change you make will either improve these numbers or you revert the change.
+The output tells you: "Parsed 100 messages, including 87 add orders, with 2610 allocations." Treat that as your baseline contract for this fixture.
+
+Record baseline in source control notes, not memory. A baseline that lives only in terminal output gets lost and invites accidental regression acceptance.
 
 [WARNING]
 ====
@@ -30,9 +44,9 @@ The output tells you: "Parsed 100 messages, including 87 add orders, with 2610 a
 
 === Find the hot path with evidence, not instinct
 
-In a real market feed, add-order traffic dominates busy windows. Every avoidable allocation on that path compounds when multiplied by 500k messages per second. That is why add-order parsing is the chapter focus: cancel and execute logic matter, but the add-order hot path is where the allocation tax gets paid most often. Not because it is theoretically slow, but because measurement shows it.
+In real feed windows, add-order traffic dominates. One avoidable allocation in that path becomes an allocation tax paid hundreds of thousands of times per second, so that is the path to optimize first.
 
-The friction here is practical: both versions parse the same data, both produce valid counts, and only one changes the cost profile. If you skip measurement, both implementations look equally correct in code review. But one puts you on commodity hardware and one forces you to run 64GB instances.
+Both implementations can pass correctness tests, so this is where teams regress silently. Keep at least one allocation-sensitive test in CI.
 
 .The optimized variant: reusing buffers instead of allocating
 [source,rust]
@@ -40,7 +54,7 @@ The friction here is practical: both versions parse the same data, both produce 
 include::../src/ch08/hot_path.rs[tag=optimized_profile]
 ----
 
-Run the optimized profile and compare only one metric first: modeled allocations.
+Run the optimized profile and compare modeled allocations first.
 
 .Running the comparison
 [source,shell]
@@ -48,11 +62,17 @@ Run the optimized profile and compare only one metric first: modeled allocations
 cargo test --test integration_ch08 hot_path_smoke::optimized_profile_reduces_modeled_allocations -- --exact
 ----
 
-The test tracks allocations through the same fixture with both code paths. The difference should be clear: one allocates per-message, the other allocates once and reuses. The latency difference is usually smaller at test scale but compounds at production scale.
+The same fixture should show the core difference clearly: one path allocates per message, the other allocates once and reuses.
+
+Keep interpretation strict:
+
+1. Allocation count dropped and correctness unchanged: keep change.
+2. Allocation count unchanged: revert and inspect assumptions.
+3. Allocation count dropped but correctness changed: reject change.
 
 === Read generated behavior before claiming a speedup
 
-Understanding assembly is not about becoming a compiler expert. It is about verifying that the change you made actually compiled to what you expected.
+Use assembly here as a contract check, not as an academic exercise.
 
 Use `cargo asm` to inspect the function you changed:
 
@@ -62,9 +82,10 @@ cargo asm book_rust::ch08::hot_path::baseline_profile
 cargo asm book_rust::ch08::hot_path::optimized_profile
 ----
 
-Compare the instruction counts. The important move is not memorizing x86-64 syntax. You are checking that the optimized version removed repeat allocation calls from the steady-state loop. Look for `call alloc::vec::Vec::extend_from_slice` in the baseline; it should be gone or moved outside the loop in the optimized version.
+You are checking that repeat allocation calls left the steady-state loop. Look for `call alloc::vec::Vec::extend_from_slice` in the baseline; it should be gone or moved outside the loop in the optimized version.
 
-[listing]
+.Assembly diff excerpt: allocation call removed from steady-state loop
+[source,text]
 ----
 baseline:
   ...
@@ -76,19 +97,25 @@ optimized:
   ...
   callq core::slice::iter::next
   ...
----- (no Vec extend in the loop)
+----
 
-The confidence here is mechanical. If you see the allocation call is gone, you proved the change worked.
+(no Vec extend in the loop)
+
+If that call disappears from the loop, the optimization did what you intended.
+
+If assembly inspection is unavailable on your machine, pair allocation counters with latency percentile checks in a controlled fixture run. It is a weaker signal than assembly plus counters, but still better than intuition.
 
 === One change, one measurement discipline
 
-Keep the discipline narrow: change one thing, rerun one measurement, record the delta. If two metrics moved (latency and allocations both changed), rerun with one more controlled edit so you understand which change caused which effect.
+Keep the discipline narrow: change one thing, rerun one measurement, record the delta. If two metrics moved, rerun with one more controlled edit so you can attribute cause.
 
-This discipline is where most optimization fails. Over-enthusiastic engineers change three things, see a 10% speedup, and then cannot explain which change was responsible. Six months later they try to clean up the code and the 10% disappears because they reverted the wrong thing.
+Most optimization failures are attribution failures: too many changes at once and no reliable explanation for the gain.
+
+A useful guardrail is "one hypothesis per commit." If a commit claims two unrelated performance wins, split it before merging.
 
 === Threads versus async: a workload decision, not a default
 
-You now have a measured hot path and can reason about concurrency models. The choice between threads and async is not "async is faster." It is "which model fits the workload."
+With a measured hot path, the concurrency question becomes workload fit, not preference.
 
 .Workload characteristics: fixed vs. variable latency
 [source,rust]
@@ -96,9 +123,11 @@ You now have a measured hot path and can reason about concurrency models. The ch
 include::../src/ch08/hot_path.rs[tag=workload_model]
 ----
 
-The feed parsing is bounded: you read a fixed-size frame, parse it, hand it off. It is a conveyor belt. Threads fit bounded, CPU-bound work. The order book is similar: each message does a bounded amount of work. Threads fit.
+Feed parsing is bounded, CPU-heavy conveyor-belt work. Threads fit that shape.
 
-Async fits fan-out: one producer, many consumers, consumer latency varies. Parser is done in 50 microseconds but risk checks three consumers and one tails off at 200 microseconds. Async shines when you have many concurrent tasks with variable completion times.
+Async fits fan-out: one producer, many consumers, variable completion times.
+
+Threads and async are tools, not progression levels. Choosing threads here does not block async in xref:10_async_fanout_backpressure.adoc#ch-async-fanout-backpressure[async fan-out and backpressure].
 
 .Choosing the concurrency model: threads for bounded work, async for fan-out
 [source,rust]
@@ -106,12 +135,26 @@ Async fits fan-out: one producer, many consumers, consumer latency varies. Parse
 include::../src/ch08/hot_path.rs[tag=choose_model]
 ----
 
-This keeps the transition honest: your evidence from Chapter 8 (threads are efficient here) leads to Chapter 9 (implementation). Your evidence of fan-out needs (risk, book, reporting) leads to Chapter 10 (async).
+That keeps the transition honest: <<ch-threads-channels-order-book-pipeline,threaded pipeline>> for bounded stages, and xref:10_async_fanout_backpressure.adoc#ch-async-fanout-backpressure[async fan-out] for backpressure.
 
-The dry observation for this chapter: the code path that felt slow before measurement is often not the bottleneck. Measurement makes that clear.
+[NOTE]
+====
+Optimization decisions should be reversible. Keep benchmarks, fixture size, and measurement command lines close to the code so future changes can revalidate assumptions quickly.
+====
+
+The bottleneck you can measure is the only bottleneck worth optimizing.
+
+=== Completion criteria
+
+Treat this chapter as complete only when all of the following are true:
+
+1. Baseline and optimized runs are both captured for the same fixture.
+2. Allocation deltas are explained in terms of one concrete code change.
+3. Correctness tests still pass after optimization.
+4. Your concurrency model decision is documented with measured evidence.
 
 === Exercise
 
 Run the baseline profile on your fixture stream, compare the baseline and optimized allocation counts, then choose your concurrency model (`Threads` or `Async`) for the next stage based on the evidence.
 
-You have measured the hot path and chosen a concurrency model. The parser and order book can run independently without contention if you give each its own thread. Chapter 9 makes that split explicit.
+You have measured the hot path and chosen a concurrency model. The parser and order book can run independently without contention if you give each its own thread. <<ch-threads-channels-order-book-pipeline,Threaded pipeline architecture>> makes that split explicit.

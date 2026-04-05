@@ -1,6 +1,7 @@
-== Chapter 3: Build an Order Book That Cannot Hold a Contradictory State
+[[ch-order-book-state-modeling]]
+== Build an Order Book That Cannot Hold a Contradictory State
 
-Your chapter 2 parser can walk a market feed without allocating. It extracts individual messages from the stream with surgical precision. Useful, but incomplete: a parser that cannot maintain live state is just a well-behaved spectator.
+Your <<ch-zero-copy-message-handling,zero-copy parser>> can walk a market feed without allocating. It extracts individual messages from the stream with surgical precision. Useful, but incomplete: a parser that cannot maintain live state is just a well-behaved spectator.
 
 The parsed messages need somewhere to land. An order book that tracks the current state of every live order. That is where Rust stops being a parser language and starts acting like a design language—because the state transitions are where correctness either lives or dies.
 
@@ -97,7 +98,7 @@ The order book is only useful if it can consume the parsed feed directly. The fe
 include::../src/ch03/order_book.rs[tag=replay_stream]
 ----
 
-This function is short because chapter 2 already did the hard separation. The feed handler yields `MessageView`. `TryFrom` turns that into `BookEvent`. `apply` mutates the book or returns a named error. Each layer does one job and hands the next layer something smaller and more precise.
+This function is short because <<ch-zero-copy-message-handling,the prior chapter>> already did the hard separation. The feed handler yields `MessageView`. `TryFrom` turns that into `BookEvent`. `apply` mutates the book or returns a named error. Each layer does one job and hands the next layer something smaller and more precise.
 
 That stepwise narrowing is worth naming because it is a reusable Rust pattern. Start with a broad representation close to the wire. Convert it into a domain event with stronger meaning. Apply that event to state with the narrowest API that still expresses the business rule. Each conversion throws away states the next layer should never have to think about.
 
@@ -105,7 +106,7 @@ It also means testing each layer independently: does the message parse correctly
 
 === Test the complete path: parse, convert, apply
 
-Run the chapter 3 tests to verify the full path works.
+Run this chapter's tests to verify the full path works.
 
 [source,shell]
 ----
@@ -120,6 +121,6 @@ The dry observation for this chapter: good state design lets the compiler ask "w
 
 === Exercise
 
-Replay the chapter 3 order-flow fixture through the order book, process every Add, Execute, Cancel, and Replace message in sequence, and confirm that every order ends either open with the correct remaining shares or closed for an explicit reason—with zero panics and zero invalid state combinations.
+Replay this chapter's order-flow fixture through the order book, process every Add, Execute, Cancel, and Replace message in sequence, and confirm that every order ends either open with the correct remaining shares or closed for an explicit reason—with zero panics and zero invalid state combinations.
 
-Now the parser works, the feed handler streams without allocating, and the order book captures state in types that make nonsense impossible. But you have been working with comfortable fixture sizes. Chapter 4 asks a harder question: what happens when input size stops being friendly and you have a full day of real market data?
+Now the parser works, the feed handler streams without allocating, and the order book captures state in types that make nonsense impossible. But you have been working with comfortable fixture sizes. <<ch-stream-full-day-memory-stable,Streaming a full day>> asks a harder question: what happens when input size stops being friendly and you have a full day of real market data?

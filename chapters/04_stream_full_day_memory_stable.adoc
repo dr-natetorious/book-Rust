@@ -1,14 +1,15 @@
-== Chapter 4: Stream a full trading day without running out of memory
+[[ch-stream-full-day-memory-stable]]
+== Stream a full trading day without running out of memory
 
-Your chapter 3 order book captures state transitions as types that make bad states impossible to express. It works perfectly on your fixture. That same code breaks silently when input stops being friendly.
+Your <<ch-order-book-state-modeling,order-book model>> made contradictory state transitions impossible. That protected correctness once a message reached your state model. This chapter solves the part that happens before that: reading a full day of feed data without turning memory usage into the bottleneck.
 
-The test fixtures you have been using are tiny: dozens of messages, a few kilobytes. But actual Nasdaq ITCH data for a full trading day compresses to 3.3—5.2 gigabytes. Decompress it and you get 10—20 gigabytes of raw binary records. That is an order book problem only if you load everything into memory first and then parse. It is a memory problem if your mental model is still "load all data, then process."
+The fixture flow hides the real constraint. A fixture with 40 records invites a comforting pattern: read all bytes, parse all messages, then apply them. Full-day Nasdaq ITCH files punish that pattern. The compressed file is usually 3.3-5.2 GB. After decompression, the raw stream is often 10+ GB. If the first step in your pipeline is "materialize everything," your machine is now a memory test harness instead of a feed processor.
 
-You need to flip that model. The parser from chapter 2 already consumes one record at a time. The missing part is a frame iterator that yields borrowed slices from a buffer without forcing you to hold the entire feed in memory at once. This is where Rust's explicit borrow semantics give you something you cannot easily get in other languages: you can iterate through gigabytes of data while holding only the current frame in memory.
+Your parser already works record by record. The missing capability is delivery: producing one frame at a time from a shared buffer, then releasing it as soon as the next frame advances. This chapter is that pivot. You are not changing market logic. You are changing data movement so throughput and memory stay predictable under full-day replay.
 
 === The frame iterator: yielding slices without copying
 
-The naive approach fails fast once data size grows. If you load the whole file, deserialize into owned Vec, walk the Vec:
+The first version that usually appears is easy to read and expensive to run. Load the file, parse into owned records, then iterate the owned collection:
 
 [source,rust]
 ----
@@ -21,7 +22,7 @@ for chunk in data.chunks_fixed() {
 // Every one holding a copy of the parsed state
 ----
 
-That works locally but breaks when your infrastructure team asks why you're running 64GB instances to process 3.3GB files.
+That code is not wrong. It is just shaped for convenience instead of sustained replay. Memory grows with input size, allocator pressure climbs, and your deployment choice becomes "bigger instance" instead of "better pipeline." This is exactly the place where Rust gives you a mechanical alternative: parse views into borrowed slices, not owned copies, and advance a cursor.
 
 Rust's iterator pattern with borrowed slices lets you change that:
 
@@ -31,7 +32,9 @@ Rust's iterator pattern with borrowed slices lets you change that:
 include::../src/ch04/stream.rs[tag=frame_iter]
 ----
 
-This is the same tradeoff you have seen in other languages when you switch from materialized collections to streaming cursors: skip building the intermediate Vec. Instead, yield each item one at a time. Rust's version is explicit because the borrow ties each payload to the source buffer, so you do not accidentally keep old frames alive forever.
+The key decision in this iterator is ownership placement. The iterator owns the buffer and exposes each frame as a borrow tied to that owner. You can inspect the frame, parse it, and pass a parsed view downstream. You cannot stash old frames forever unless you copy them on purpose. The compiler forces the lifetime relationship, so memory discipline stops being convention and becomes type-checked behavior.
+
+This mirrors streaming cursor designs from other ecosystems, but with stricter guarantees. In many runtimes, you have to trust a team convention that nobody retains references too long. Here retention boundaries are enforced by lifetime constraints in the API itself.
 
 === Iterators are lazy by default, and that is the point
 
@@ -43,11 +46,16 @@ The `Iterator` trait in Rust has one method: `next()`. Each call performs exactl
 include::../src/ch04/stream.rs[tag=iterator_impl]
 ----
 
-The friction you are feeling is real. Lazy evaluation requires mental discipline. With eager evaluation you can write `collect()` once and forget about how many items exist. With lazy evaluation you have to ask: "Who is consuming this iterator?" If no one calls `next()`, the iterator does nothing and produces no output and raises no error.
+The design pressure from laziness is operational clarity. You can always answer these two questions:
 
-That is the core of lazy evaluation: nothing happens until you ask for the next item. No work, no allocation, no surprise. You pay for exactly what you consume.
+1. How much work happened?
+2. Which call site caused it?
 
-Run one concrete action: call `next()` twice and inspect offsets. The first item starts at `0`, the second at `29` for the fixture used in tests. If those offsets drift, your memory profile might still look flat while your parser is silently skipping bytes. The test is your anchor.
+With eager materialization, one innocent `collect()` can hide a massive allocation step. With lazy iteration, work only happens when a consumer asks for another item.
+
+That shifts how you test. For this chapter, assert cursor movement explicitly. Read frame 1, then frame 2, then assert the new offset. Those assertions catch parser drift early, before an end-to-end replay masks the bug with aggregate counts.
+
+Lazy iteration is not a performance trick. It is the control surface that lets you stream a 10+ GB file through a bounded memory footprint.
 
 [WARNING]
 ====
@@ -56,7 +64,7 @@ Run one concrete action: call `next()` twice and inspect offsets. The first item
 
 === Compose iterators for staged processing
 
-You also need a typed stream that yields parsed events directly, not raw frame slices.
+Frame boundaries are only the first stage. The next stage should expose domain values (`MessageView`) while preserving the same pull-based behavior.
 
 .Composing iterators: from frames to parsed domain messages
 [source,rust]
@@ -64,7 +72,13 @@ You also need a typed stream that yields parsed events directly, not raw frame s
 include::../src/ch04/stream.rs[tag=parsed_message_iter_impl]
 ----
 
-This pattern matters because it scales. One iterator reads frame boundaries, the next adapter turns frames into domain messages (`MessageView` from chapter 2), and downstream code only sees meaningful items. Each adapter compiles to simple loops with no hidden scheduler. You can map this directly to familiar ideas from Go channels or Java streams, but here each adapter costs zero allocation.
+This composition pattern gives you a stable architecture under change:
+
+1. Boundary reader handles offsets and lengths.
+2. Parser adapter turns bytes into typed views.
+3. Business logic consumes typed views only.
+
+When an issue appears, diagnosis stays local. Boundary errors belong to stage 1, schema errors to stage 2, state errors to stage 3. That separation is worth as much as the memory savings because it keeps failures explainable.
 
 For file-backed inputs, move from borrowed slices to owned payloads while keeping the same iterator interface. The key is that the iterator owns the buffer, so each yielded frame is still a borrow tied to a single owner.
 
@@ -74,7 +88,9 @@ For file-backed inputs, move from borrowed slices to owned payloads while keepin
 include::../src/ch04/stream.rs[tag=file_frame_iter]
 ----
 
-The file iterator owns the buffer. Each yielded frame is a slice borrowed from that single buffer. Once the iterator drops or advances, the old frame becomes invalid. That makes it impossible to build a Vec of frames by accident.
+The constraint is intentional: as soon as the iterator advances, earlier borrowed frames are no longer usable. That prevents accidental hoarding. If you truly need retention, you clone explicitly and pay explicitly.
+
+This is the same explicit tradeoff pattern that drove <<ch-zero-copy-message-handling,zero-copy handling>>. Borrow by default, copy when there is a measured reason.
 
 === Verify zero allocations with cargo-asm
 
@@ -85,26 +101,41 @@ If `cargo-asm` is available in your environment, inspect the assembly for `Frame
 cargo asm book_rust::ch04::stream::FrameIter::next
 ----
 
-What you are looking for is absence of allocation calls. `call alloc::vec::Vec::extend_from_slice` should not appear in the hot path. `call core::slice::iter::next` is fine—that is the advancement logic. The confidence here is mechanical: if you see `malloc` or `Vec::push` in the assembly, your memory profile is not flat.
+Do not read this output as an assembly class. Read it as a contract check for the hot path.
+
+You want to confirm absence of allocation-heavy calls inside `next`. Seeing slice and bounds operations is expected. Seeing `Vec::push`, `extend_from_slice`, or allocator calls indicates a regression.
+
+This is one of the few places where low-level inspection gives immediate practical value. A single accidental copy in this path is multiplied by every frame in a full-day replay.
 
 If `cargo-asm` is not available, use `cargo test --test integration_ch04` as your immediate confidence signal. The tests include allocator tracking. A failing allocation test means you have a leak waiting in your hot path.
 
 === Run the iterator pipeline
 
-The dry observation for this chapter is simple: the bytes do not care how elegant your iterator chain looks. They only care whether you stopped allocating.
+Now run the chapter tests as a pipeline health check.
 
 Run both the happy path and the failure tests:
 
-.Running the Chapter 4 integration test
+.Running the integration test for <<ch-stream-full-day-memory-stable,streaming a full day>>
 [source,shell]
 ----
 cargo test --test integration_ch04
 ----
 
-The truncation test verifies that a malformed header returns an error instead of panicking and continuing with garbage. The file iterator test confirms that you can iterate across all frames without holding them in memory simultaneously. The performance test verifies that memory stays flat across thousands of frames.
+Interpret the suite in three groups:
+
+1. Boundary correctness: frame lengths and offsets move as expected.
+2. Failure behavior: truncation and malformed records return typed errors.
+3. Memory behavior: no allocation growth in steady-state iteration.
+
+If group 1 fails, stop and fix parser boundaries first. If group 2 fails, your error handling is not preserving safety under bad input. If group 3 fails, your throughput tuning later in <<ch-profile-and-optimize-hot-path,hot-path profiling>> will be misleading because allocator churn is already distorting baseline performance.
 
 === Exercise
 
-Run the parser against your fixture stream through `FileFrameIter`, confirm that processing stays frame-by-frame with flat memory use across thousands of records, then check the test output for confirmed frame boundary tracking and zero unintended allocations.
+Replay the fixture through `FileFrameIter`, log frame offsets for the first ten records, and verify two properties:
 
-You now process gigabytes of data while holding only one frame at a time. The iterator chain is clean, the allocation profile is flat, and the order book can ingest the full feed. But the code still assumes every record is well-formed. Chapter 5 asks: what happens when a record is corrupted?
+1. Offsets advance deterministically with no gaps or overlaps.
+2. Memory usage remains flat across the full run.
+
+Then run `cargo test --test integration_ch04` and keep the output that proves zero unintended allocations.
+
+You now have a feed pipeline that scales with stream length instead of RAM size. The order book can process a full day without preloading the world. The next failure is not memory. The next failure is trust in input quality. <<ch-error-design-under-corruption,Error design under corruption>> turns corrupt records into explicit, testable outcomes.

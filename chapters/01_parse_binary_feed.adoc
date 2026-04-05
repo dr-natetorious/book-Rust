@@ -1,4 +1,5 @@
-== Chapter 1: Parse a Binary Market Feed from Raw Bytes
+[[ch-parse-binary-feed]]
+== Parse a Binary Market Feed from Raw Bytes
 
 Your task in this chapter is concrete: read a binary stream of market data messages, parse them correctly, and hand the parsed records to the caller. That sounds routine. The Rust constraint—that you must be explicit about which code owns each value—will transform it into a lesson about memory and responsibility that no amount of documentation would have made stick.
 
@@ -89,7 +90,7 @@ Why does that matter? In many languages, `msg` would be a reference to an object
 
 This is a useful contrast with other languages. In C++, the code might copy, move, or bind a reference depending on signatures and value categories that are easy to gloss over in a quick read. Rust forces the transfer to be explicit enough that you can see it in the function call. There is nowhere to hide.
 
-How do you fix this? You need to make a choice: does `process` need ownership, or can it borrow? If it only reads, pass a reference: `process(&msg)`. If it needs to own the value, either return it afterward or accept the move as explicit ownership transfer. If you want both to work with the same value, clone: `process(msg.clone())`. But that costs memory, which is exactly why chapter 2 exists.
+How do you fix this? You need to make a choice: does `process` need ownership, or can it borrow? If it only reads, pass a reference: `process(&msg)`. If it needs to own the value, either return it afterward or accept the move as explicit ownership transfer. If you want both to work with the same value, clone: `process(msg.clone())`. But that costs memory, which is exactly why <<ch-zero-copy-message-handling,zero-copy message handling>> exists.
 
 Rust is forcing that decision at compile time, right now, while the data model is small enough to understand. You are not debugging shared-ownership bugs in production code written by someone who forgot what they passed where.
 
@@ -109,7 +110,7 @@ This function does two jobs. First, it proves that the stream framing logic is c
 
 Second, the function shows where ownership goes. Each parsed message is pushed into a `Vec<AddOrderMessage>`. That `Vec` lives on the heap, but the variable that owns it lives in the current stack frame. The parsed `AddOrderMessage` values are owned values inside that vector, not references back into the input stream. When `parse_records` returns, the caller gets a self-contained result. The slice you passed in—the input buffer—can go away. The messages remain valid because they own their data.
 
-That last point is the important bridge to later chapters. It is not the final architecture. It is the right architecture for chapter 1 because you need a concrete success case before you optimize anything. If you skip this step and reach for borrowing immediately, you will have two moving parts instead of one. Zero-copy parsing is chapter 2's problem. Correctness is chapter 1's.
+That last point is the important bridge to later chapters. It is not the final architecture. It is the right architecture for <<ch-parse-binary-feed,this chapter>> because you need a concrete success case before you optimize anything. If you skip this step and reach for borrowing immediately, you will have two moving parts instead of one. Zero-copy parsing is <<ch-zero-copy-message-handling,the next chapter>>'s problem. Correctness is this chapter's.
 
 === Owning the result: why Vec makes sense here
 
@@ -119,13 +120,13 @@ You could return an iterator and parse lazily. That would avoid allocating the e
 
 You could return a single `AddOrderMessage` and make the caller loop. Then the caller does the iteration logic. That distributes concern across multiple functions.
 
-The upfront allocation—parse everything, store in a `Vec`, return it—is one problem solved once. The `Vec` grows as needed, then you are done. The caller gets a self-contained result. That simplicity is worth the temporary memory cost in chapter 1. Chapter 4 will optimize it away.
+The upfront allocation—parse everything, store in a `Vec`, return it—is one problem solved once. The `Vec` grows as needed, then you are done. The caller gets a self-contained result. That simplicity is worth the temporary memory cost in this chapter. <<ch-stream-full-day-memory-stable,Streaming a full day>> will optimize it away.
 
 === Running the parser against a real fixture
 
 The repository already has a deterministic hex fixture and a smoke test around it. This is the first moment where you run code and see real output.
 
-.Running the Chapter 1 integration test
+.Running the integration test for <<ch-parse-binary-feed,parse-binary-feed>>
 [source,shell]
 ----
 cargo test --test integration_ch01
@@ -154,12 +155,12 @@ cargo test --test integration_ch01 parses_single_add_order_from_fixture -- --noc
 
 You should see the struct printed with its fields. The order reference, side, shares, symbol, and price. Real data from the fixture. That is the moment it becomes concrete: bytes became fields. The types are real. The compiler checked that you are not accidentally reading garbage.
 
-When the tests pass you know three things: the framing is correct, the field extraction is correct, and truncation fails where you expect it to fail. That is enough ground to stand on before the next chapter takes the copies away. Chapter 2 will use the same parsing logic but without copying the fixed-width fields.
+When the tests pass you know three things: the framing is correct, the field extraction is correct, and truncation fails where you expect it to fail. That is enough ground to stand on before <<ch-zero-copy-message-handling,the next chapter>> takes the copies away. It will use the same parsing logic but without copying the fixed-width fields.
 
 === The price of the approach
 
-Copying the stock symbol into the struct (`symbol: [u8; 8]`) works but is wasteful. The stock symbol is already in the input buffer. Why copy it? That question is the entire engine of chapter 2, so hold it for now. In chapter 1, you copy because it is simple. Simplicity buys you correctness. Efficiency comes after.
+Copying the stock symbol into the struct (`symbol: [u8; 8]`) works but is wasteful. The stock symbol is already in the input buffer. Why copy it? That question is the entire engine of <<ch-zero-copy-message-handling,zero-copy message handling>>, so hold it for now. In this chapter, you copy because it is simple. Simplicity buys you correctness. Efficiency comes after.
 
 === Exercise
 
-Run the parser against the chapter 1 fixture and print every Add Order record with its order reference, side, shares, stock symbol, and price. Verify the test passes and no compile errors occur.
+Run the parser against this chapter's fixture and print every Add Order record with its order reference, side, shares, stock symbol, and price. Verify the test passes and no compile errors occur.

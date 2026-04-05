@@ -16,13 +16,13 @@ This book is for engineers who already know how to program and want Rust taught 
 
 It assumes you understand what a heap allocation costs. It assumes you know why data races are catastrophic — either because you've debugged one in production, or because you've thought carefully enough about shared mutable state to know you'd rather not. It does not assume you've already read a Rust book. When the prose uses a Rust-specific idea such as ownership, borrowing, or traits, it needs to earn that idea on the page.
 
-What it will do is put you in situations where Rust's ownership model is the only clean solution. You'll meet unfamiliar syntax early, but always in the middle of a concrete task. You'll feel the friction of the wrong approach before you understand the right one. That ordering is intentional. The compiler errors you'll hit in chapter 1 are the syllabus.
+What it will do is put you in situations where Rust's ownership model is the only clean solution. You'll meet unfamiliar syntax early, but always in the middle of a concrete task. You'll feel the friction of the wrong approach before you understand the right one. That ordering is intentional. The compiler errors you'll hit in <<ch-parse-binary-feed,parse-binary-feed>> are the syllabus.
 
 If you're brand new to programming, this is the wrong first book. If you're a senior engineer coming from C++, Go, Python, Java, or a similar language and you want to become fluent in Rust by building something that matters, this is the book.
 
 === The platform you're going to build
 
-The project runs for twelve chapters. Every line of code you write in chapter 2 is still running in chapter 12.
+The project runs for twelve chapters. Every line of code you write in <<ch-zero-copy-message-handling,zero-copy handling>> is still running in xref:12_publish_crate_semver_api.adoc#ch-publish-crate-semver-api[crate publishing].
 
 The project is a market data platform: a system that reads a binary feed of financial messages, maintains a live order book, applies pre-trade risk checks, and publishes snapshots to downstream consumers. By the end, it's concurrent, async, tested, and packaged as a crate.
 
@@ -125,7 +125,7 @@ The span annotations are where the information is. The message at the top is a s
 
 This is worth slowing down for because Rust errors often explain a rule you have been applying informally for years. In Python you might see a runtime failure after the fact. In Java you may get a type mismatch and move on. In C++ you may get no warning at all and then spend an afternoon with a debugger. Rust tends to stop earlier and tell you which ownership or borrowing rule you crossed while the code is still small enough to fix in one pass.
 
-You'll spend real time on compiler errors in the first three chapters. That time is the investment. By chapter 5 the errors read as fast as print statements — they're telling you something precise that you've already internalized. The chapter still takes the same clock time to resolve. It just stops feeling like a fight.
+You'll spend real time on compiler errors in the first three chapters. That time is the investment. By <<ch-error-design-under-corruption,error design under corruption>> the errors read as fast as print statements — they're telling you something precise that you've already internalized. The chapter still takes the same clock time to resolve. It just stops feeling like a fight.
 
 Most build systems tell you something broke. The Rust compiler tells you what you were thinking when you broke it.
 
@@ -154,7 +154,7 @@ test parser_smoke::parses_single_add_order_from_fixture ... ok
 test result: ok. 3 passed; 0 failed
 ----
 
-Three parser tests passing against a deterministic hex fixture. You didn't write the parser yet — chapter 1 will walk through it line by line. The toolchain works, the crate compiles, the test harness runs.
+Three parser tests passing against a deterministic hex fixture. You didn't write the parser yet — <<ch-parse-binary-feed,parse-binary-feed>> will walk through it line by line. The toolchain works, the crate compiles, the test harness runs.
 
 If `cargo test` fails: check that you're on Rust stable 1.94.1 (`rustc --version`), and that you have no local uncommitted changes.
 
@@ -181,7 +181,7 @@ curl -L -o data/01302020.NASDAQ_ITCH50.gz \
   "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/01302020.NASDAQ_ITCH50.gz"
 ----
 
-Do not decompress it yet. Chapter 11 will handle that in Rust. For now, the file goes in `data/` at the root of the repository. The tests in chapters 1 through 10 run against deterministic fixtures and don't require this file. When an exercise says "the sample file," it means this one.
+Do not decompress it yet. xref:11_ffi_libz_safe_wrapper.adoc#ch-ffi-libz-safe-wrapper[FFI decompression] will handle that in Rust. For now, the file goes in `data/` at the root of the repository. The tests from <<ch-parse-binary-feed,parse-binary-feed>> through xref:10_async_fanout_backpressure.adoc#ch-async-fanout-backpressure[async fan-out] run against deterministic fixtures and don't require this file. When an exercise says "the sample file," it means this one.
 
 [NOTE]
 ====
@@ -190,10 +190,10 @@ The `data/` directory is listed in `.gitignore`. The binary file does not belong
 
 === Exercise
 
-Before moving to chapter 1, confirm three things:
+Before moving to <<ch-parse-binary-feed,parse-binary-feed>>, confirm three things:
 
 . `cargo test` passes with no failures.
 . `rustc --version` reports 1.94.1.
 . The sample data file is present at `data/01302020.NASDAQ_ITCH50.gz` (or your chosen alternative).
 
-That's the baseline. Chapter 1 starts from exactly this state.
+That's the baseline. <<ch-parse-binary-feed,Parse a Binary Market Feed from Raw Bytes>> starts from exactly this state.
