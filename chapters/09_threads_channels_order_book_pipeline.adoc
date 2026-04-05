@@ -130,6 +130,7 @@ Treat this chapter as complete only when all of the following are true:
 2. Happy-path replay produces deterministic final state for the fixture.
 3. A malformed message returns a typed `PipelineError` with useful context.
 4. Worker shutdown behavior is deterministic under both normal completion and failure.
+5. You have a measured throughput comparison against the single-loop baseline, with clear delta and fixture parity.
 
 === Summary
 

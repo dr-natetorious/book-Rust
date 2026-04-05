@@ -125,6 +125,18 @@ This pattern holds at any FFI boundary:
 
 Add a sixth rule in this repo: keep raw FFI calls private to one module. Public API should expose only safe Rust types and error enums.
 
+=== Regenerate bindings with bindgen when the C boundary changes
+
+If the C surface changes, regenerate bindings instead of hand-editing signatures. `bindgen` keeps Rust declarations synchronized with the header contract and reduces drift between FFI declarations and linked library behavior.
+
+[source,shell]
+----
+cargo install bindgen-cli
+bindgen /usr/include/zlib.h -o src/ch11/bindings.rs
+----
+
+Treat generated bindings as build artifacts that must be reviewed but not manually curated line by line. Your safe wrapper remains the stable public surface; bindings are the raw boundary material.
+
 The system you built now handles real compressed data. Everything from <<ch-parse-binary-feed,parsing>> through <<ch-async-fanout-backpressure,async fan-out>> still runs. The feed handler can now download, decompress, parse, maintain state, enforce checks, and fan-out to consumers—all without manual preprocessing steps.
 
 The dry observation for this chapter: safe wrapper design moves the danger surface from "call C code" to "call this specific Rust function with this specific contract." The second one you can audit and test.
@@ -137,6 +149,7 @@ Treat this chapter as complete only when all of the following are true:
 2. Public callers interact only with safe Rust types and typed errors.
 3. Corrupt input paths fail deterministically without exposing partial output.
 4. Contract tests pass and include at least one UB-focused check under Miri workflow.
+5. One binary path can download and decompress the sample file without a manual unzip step.
 
 === Summary
 

@@ -152,6 +152,7 @@ Treat this chapter as complete only when all of the following are true:
 2. Allocation deltas are explained in terms of one concrete code change.
 3. Correctness tests still pass after optimization.
 4. Your concurrency model decision is documented with measured evidence.
+5. You have a recorded throughput run that reaches or justifies progress toward 1M+ messages/second on commodity hardware for this pipeline stage.
 
 === Summary
 

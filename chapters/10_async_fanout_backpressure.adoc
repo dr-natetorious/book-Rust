@@ -111,6 +111,19 @@ The rule is direct: do not hold synchronous mutex guards across `.await` points 
 
 Apply this guardrail in code review: if a lock guard variable is live at an `.await`, refactor immediately. Either narrow lock scope before `.await` or switch to async-aware synchronization.
 
+=== Diagnose stalls with tokio-console
+
+When fan-out behavior degrades under load, you need task-level visibility rather than guesswork. Use `tokio-console` to confirm where tasks are parked, which tasks are waiting, and whether backpressure comes from channel saturation or lock contention.
+
+[source,shell]
+----
+cargo install tokio-console
+RUSTFLAGS="--cfg tokio_unstable" cargo run
+tokio-console
+----
+
+Focus on three signals while replaying your fixture: tasks with long poll intervals, tasks repeatedly waiting on channel send, and tasks blocked behind shared synchronization. If a slow lane correlates with send waits in the producer task, the pressure path is real and you can tune capacity or policy with evidence.
+
 === The async/sync decision
 
 You have async channels from Tokio for fan-out. You have bounded queues for backpressure visibility. You have error surfaces for monitoring. The pattern is: use async when you have many concurrent tasks with variable latency. Use threads and synchronous channels when you have a fixed set of workers doing CPU-bound work.
@@ -132,6 +145,7 @@ Treat this chapter as complete only when all of the following are true:
 2. `backpressure_events` is observed and explained for the slow-consumer case.
 3. No synchronous mutex guard is held across `.await` in task code.
 4. Lane saturation policy is documented and implemented consistently.
+5. One `tokio-console` session capture explains where a representative slow-consumer stall occurs.
 
 === Summary
 

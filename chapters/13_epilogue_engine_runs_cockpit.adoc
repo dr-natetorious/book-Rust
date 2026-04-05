@@ -1,0 +1,87 @@
+[[epilogue-engine-runs-cockpit]]
+== Epilogue: The engine runs. Now put a cockpit on it.
+
+You now have a complete Rust data pipeline that can ingest, parse, validate, model state, fan out safely, and publish a stable API. That is a full engine. What it still needs is a cockpit: the layer where teams inspect behavior, ask analytical questions, and make decisions from outputs rather than from implementation details.
+
+For most teams, that cockpit is Python. Not because Rust is insufficient, but because analytics workflows, notebooks, and model tooling already live there. This epilogue is the practical bridge: keep the Rust engine for correctness and speed, expose focused surfaces to Python for exploration and downstream analysis.
+
+=== Calling the feed handler from Python with PyO3
+
+The fastest path from "working Rust crate" to "usable by quant and data teams" is a narrow PyO3 wrapper around a few high-value operations. Start with one operation that is easy to verify end to end: parse a deterministic fixture and return normalized snapshot rows.
+
+Keep the first wrapper intentionally small. Do not expose every internal type. Expose one function that takes a path and returns records in a Python-native structure. Your Rust side stays authoritative for parsing and validation; Python side stays focused on composition and analysis.
+
+[source,rust]
+----
+use pyo3::prelude::*;
+
+#[pyfunction]
+fn load_snapshots(path: &str) -> PyResult<Vec<(String, u64, u32, u32)>> {
+    // Call into your existing Rust pipeline here.
+    // Return symbol, ts_nanos, best_bid, best_ask tuples.
+    Ok(vec![])
+}
+
+#[pymodule]
+fn feedbridge(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(load_snapshots, m)?)?;
+    Ok(())
+}
+----
+
+You can keep this around 50 lines for a first useful integration if you avoid broad object modeling and start with a flat output shape. That is enough for teams to answer immediate questions in notebooks without rewriting parser logic in Python.
+
+The key engineering rule for this boundary: keep ownership and validation in Rust, keep orchestration and exploratory transforms in Python.
+
+=== Feeding order book snapshots into pandas
+
+Once snapshots are visible in Python, the second step is converting those records into a DataFrame and validating that the shape supports the questions downstream teams ask.
+
+[source,python]
+----
+import pandas as pd
+from feedbridge import load_snapshots
+
+rows = load_snapshots("data/01302020.NASDAQ_ITCH50.gz")
+
+df = pd.DataFrame(rows, columns=["symbol", "ts_nanos", "best_bid", "best_ask"])
+df["mid"] = (df["best_bid"] + df["best_ask"]) / 2
+print(df.head())
+print(df.groupby("symbol").mid.describe())
+----
+
+This is where the cockpit value appears quickly. Teams can compute spread behavior, outlier windows, symbol-level summaries, and quick diagnostics without touching Rust internals. If a result looks suspicious, they can trace back to deterministic Rust fixtures and typed replay boundaries, instead of debugging silent parser drift in notebook code.
+
+The bridge is not about replacing Rust with pandas. It is about giving Python users a trustworthy data substrate.
+
+=== Where the quant stack goes next
+
+Once your bridge is stable, the next set of decisions is workflow architecture, not syntax:
+
+Use Rust for ingest, validation, and stateful transformations that must be deterministic and low-latency. Use Python for exploratory analysis, feature generation, and model iteration where fast change velocity matters more than per-message microseconds.
+
+That split keeps both sides honest. Rust code has strict contracts and test-heavy evolution; Python notebooks stay expressive and fast for experimentation. When experiments harden into production logic, move those operations back into Rust and keep Python as the analytical control surface.
+
+A practical next step is to define one shared schema contract between Rust output and Python consumers. Schema drift is the hidden tax in mixed-language pipelines. You already solved this once in the crate API chapter; apply the same discipline here.
+
+=== The FPGA horizon, without pretending this is that
+
+It is useful to be explicit: this project is not colocated HFT infrastructure. It is a rigorously engineered software engine running on commodity hardware. That is already enough for a large class of feed processing, research, surveillance, and pre-trade control workloads.
+
+Ultra-low-latency FPGA systems live on a different cost and complexity frontier: hardware design constraints, exchange colocation economics, deterministic wire protocols in logic, and deeply specialized tooling. Those systems can push message handling into nanosecond territory, but they require a very different team profile and lifecycle.
+
+The useful framing is progression, not comparison. This project gives you software correctness and systems discipline that carry forward if you ever decide to move specific paths into hardware acceleration. It is not a toy. It is the substrate most teams need before hardware investment is rational.
+
+=== Serious Rust code you are now ready to read
+
+If you want to keep building fluency from real codebases, start with projects that reflect the same constraints you just worked through: bytes-level parsing, async coordination, message-passing, and predictable API contracts.
+
+Good next reading targets include low-level buffer and parsing libraries, async runtime internals, and channel implementations that make pressure and wakeup behavior explicit. You will now read these codebases differently than you would have at the beginning of the book. You have a concrete frame for ownership edges, failure surfaces, and concurrency contracts.
+
+Read with this question in mind: where is correctness enforced by type shape, and where is it enforced by process discipline? The best systems do both deliberately.
+
+=== Closing
+
+You started with unfamiliar ownership errors and ended with a publishable system that is measurable, testable, and operable. That progression is the point of the book. Rust did not remove engineering judgment; it moved more of it into places where the compiler and test harness can assist you.
+
+The engine runs. The cockpit is in reach. The next step is to connect this foundation to the workflows your team actually uses and keep the same discipline that got you here.
